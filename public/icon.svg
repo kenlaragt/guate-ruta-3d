@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0f172a" />
+      <stop offset="100%" stop-color="#090d16" />
+    </linearGradient>
+    <linearGradient id="carBody" x1="0" y1="0" x2="1" y2="0.5">
+      <stop offset="0%" stop-color="#fbbf24" />
+      <stop offset="100%" stop-color="#d97706" />
+    </linearGradient>
+  </defs>
+  <!-- Background Rounded Tile -->
+  <rect width="512" height="512" rx="108" fill="url(#bg)" />
+  <rect x="18" y="18" width="476" height="476" rx="92" fill="none" stroke="#1e293b" stroke-width="8" />
+
+  <!-- Perspective 3D Track Road -->
+  <polygon points="196,290 316,290 436,474 76,474" fill="#1e293b" />
+  <line x1="196" y1="290" x2="76" y2="474" stroke="#f59e0b" stroke-width="10" stroke-linecap="round" />
+  <line x1="316" y1="290" x2="436" y2="474" stroke="#f59e0b" stroke-width="10" stroke-linecap="round" />
+  <line x1="256" y1="305" x2="256" y2="348" stroke="#f8fafc" stroke-width="10" stroke-linecap="round" />
+  <line x1="256" y1="382" x2="256" y2="444" stroke="#f8fafc" stroke-width="12" stroke-linecap="round" />
+
+  <!-- Scenic Mountains Horizon -->
+  <polygon points="88,290 178,176 262,290" fill="#1e3a5f" />
+  <polygon points="232,290 334,158 428,290" fill="#172554" />
+
+  <!-- Stylized 3D Sports / Pickup Car Front-3/4 Badge -->
+  <g transform="translate(0, -14)">
+    <!-- Shadow -->
+    <ellipse cx="256" cy="316" rx="142" ry="22" fill="#020617" opacity="0.75" />
+    <!-- Lower Chassis -->
+    <rect x="116" y="236" width="280" height="62" rx="22" fill="url(#carBody)" />
+    <!-- Cabin Roof -->
+    <path d="M164 238 L196 182 L316 182 L350 238 Z" fill="#f59e0b" />
+    <!-- Windshield -->
+    <path d="M180 234 L204 192 L308 192 L332 234 Z" fill="#0f172a" />
+    <!-- Grille -->
+    <rect x="206" y="256" width="100" height="26" rx="8" fill="#0f172a" />
+    <!-- Headlights -->
+    <rect x="134" y="252" width="46" height="20" rx="6" fill="#fef08a" />
+    <rect x="332" y="252" width="46" height="20" rx="6" fill="#fef08a" />
+    <!-- Wheels -->
+    <rect x="128" y="276" width="48" height="38" rx="10" fill="#020617" stroke="#475569" stroke-width="4" />
+    <rect x="336" y="276" width="48" height="38" rx="10" fill="#020617" stroke="#475569" stroke-width="4" />
+  </g>
+</svg>

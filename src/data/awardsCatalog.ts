@@ -6,12 +6,12 @@ export const REAL_PEOPLE_ASSETS = {
     import.meta.url,
   ).href,
   grandTrophyShowcaseUrl: new URL(
-    '../assets/images/trophy_trio_crown_1793069073260.jpg',
+    '../assets/images/madres_visera_trofeo_1793413035891.jpg',
     import.meta.url,
   ).href,
 };
 
-export const GRAND_FINALE_PRESENTER = 'Jurado Oficial de Campeones';
+export const GRAND_FINALE_PRESENTER = 'Dos Madres Educadoras de San Lolek';
 export const GRAND_FINALE_AWARD_TITLE = 'Gran Trofeo Súper Oro con Diamantes';
 
 export const PEDESTRIAN_UV_SLICES: Array<{ uMin: number; uMax: number }> = [
@@ -56,7 +56,7 @@ export function getCheckpointAwardPlan(
       totalCheckpoints: safeTotal,
       isGrandFinale: true,
       presenterName: GRAND_FINALE_PRESENTER,
-      presenterRole: 'Entrega Oficial del Gran Trofeo Final',
+      presenterRole: 'Invitadas de Honor en el Podio Virtual',
       awardTitle: GRAND_FINALE_AWARD_TITLE,
       awardKind: 'SUPER_GOLD_DIAMONDS',
       photoUrl: REAL_PEOPLE_ASSETS.grandTrophyShowcaseUrl,

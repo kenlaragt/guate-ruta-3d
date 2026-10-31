@@ -60,7 +60,7 @@ export const VehiclePreview3D: React.FC<VehiclePreview3DProps> = ({ carId, paint
     container.appendChild(renderer.domElement);
 
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x0b111e);
+    scene.background = new THREE.Color(0xdcf0fe);
 
     const pmrem = new THREE.PMREMGenerator(renderer);
     const envTex = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
@@ -69,29 +69,29 @@ export const VehiclePreview3D: React.FC<VehiclePreview3DProps> = ({ carId, paint
 
     const camera = new THREE.PerspectiveCamera(44, w0 / h0, 0.2, 80);
 
-    // 3-Point Showroom Lighting Rig
-    const hemi = new THREE.HemisphereLight(0xcbd5e1, 0x1e293b, 0.9);
+    // Sunny Daytime 3-Point Showroom Lighting Rig
+    const hemi = new THREE.HemisphereLight(0xf0f9ff, 0xbae6fd, 1.25);
     scene.add(hemi);
-    const keyLight = new THREE.DirectionalLight(0xfff4e0, 2.2);
-    keyLight.position.set(6, 8, 6);
+    const keyLight = new THREE.DirectionalLight(0xfffbeb, 2.35);
+    keyLight.position.set(6, 9, 6);
     scene.add(keyLight);
-    const rimLight = new THREE.DirectionalLight(0x38bdf8, 0.95);
-    rimLight.position.set(-7, 4, -6);
+    const rimLight = new THREE.DirectionalLight(0x38bdf8, 1.1);
+    rimLight.position.set(-7, 5, -6);
     scene.add(rimLight);
 
-    // Showroom Turntable Plinth
+    // Bright Sky-Daytime Showroom Turntable Plinth
     const plinthGeo = new THREE.CylinderGeometry(4.4, 4.6, 0.16, 48);
     const plinthMat = new THREE.MeshStandardMaterial({
-      color: 0x131c2e,
-      metalness: 0.45,
-      roughness: 0.35,
+      color: 0xf8fafc,
+      metalness: 0.15,
+      roughness: 0.42,
     });
     const plinth = new THREE.Mesh(plinthGeo, plinthMat);
     plinth.position.y = -0.08;
 
     const ringGeo = new THREE.RingGeometry(4.18, 4.32, 48);
     ringGeo.rotateX(-Math.PI / 2);
-    const ringMat = new THREE.MeshBasicMaterial({ color: 0xf59e0b });
+    const ringMat = new THREE.MeshBasicMaterial({ color: 0x0284c7 });
     const ring = new THREE.Mesh(ringGeo, ringMat);
     ring.position.y = 0.01;
     scene.add(plinth, ring);
@@ -101,29 +101,33 @@ export const VehiclePreview3D: React.FC<VehiclePreview3DProps> = ({ carId, paint
     const rig: CarRig3D = createRealisticCarRig(spec, paintHex, shadowTex, isSoftwareGl);
     scene.add(rig.group);
 
-    // Frame camera distance cleanly for Bicycle, Tuk-Tuk, Car, or Heavy 7.4m Truck
+    // Frame camera distance cleanly for Bicycle, Electric Quad/Tricycle, Tuk-Tuk, Car, or Heavy 7.4m Truck
     const camDist =
       spec.bodyStyle === 'heavy_truck'
         ? 8.9
         : spec.bodyStyle === 'bicycle'
           ? 3.7
-          : spec.bodyStyle === 'tuk_tuk'
-            ? 4.6
+          : spec.bodyStyle === 'tuk_tuk' ||
+              spec.bodyStyle === 'electric_quad_trike' ||
+              spec.bodyStyle === 'electric_tricycle'
+            ? 4.45
             : 5.9;
     const camY =
       spec.bodyStyle === 'heavy_truck'
         ? 2.85
         : spec.bodyStyle === 'bicycle'
           ? 1.55
-          : spec.bodyStyle === 'tuk_tuk'
-            ? 1.75
+          : spec.bodyStyle === 'tuk_tuk' ||
+              spec.bodyStyle === 'electric_quad_trike' ||
+              spec.bodyStyle === 'electric_tricycle'
+            ? 1.78
             : 1.85;
     const lookY =
       spec.bodyStyle === 'heavy_truck'
         ? 1.35
         : spec.bodyStyle === 'bicycle'
           ? 0.88
-          : 0.72;
+          : 0.78;
     camera.position.set(0, camY, camDist);
     camera.lookAt(0, lookY, 0);
 
@@ -144,7 +148,7 @@ export const VehiclePreview3D: React.FC<VehiclePreview3DProps> = ({ carId, paint
     function afterDraw(cb: () => void) {
       const gl = renderer.getContext() as WebGL2RenderingContext;
       if (!gl || typeof gl.fenceSync !== 'function') {
-        frameId = window.setTimeout(cb, 80);
+        frameId = window.setTimeout(cb, 32);
         return;
       }
       const sync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
@@ -153,13 +157,13 @@ export const VehiclePreview3D: React.FC<VehiclePreview3DProps> = ({ carId, paint
         if (unmounted) return;
         const state = sync && gl.getSyncParameter(sync, gl.SYNC_STATUS);
         if (state === gl.UNSIGNALED) {
-          frameId = window.setTimeout(poll, 5);
+          frameId = window.setTimeout(poll, 4);
         } else {
           if (sync) gl.deleteSync(sync);
-          frameId = window.setTimeout(cb, 80);
+          frameId = window.setTimeout(cb, 32);
         }
       };
-      frameId = window.setTimeout(poll, 5);
+      frameId = window.setTimeout(poll, 4);
     }
 
     function tick() {
@@ -225,10 +229,10 @@ export const VehiclePreview3D: React.FC<VehiclePreview3DProps> = ({ carId, paint
       onPointerLeave={() => {
         dragStateRef.current.dragging = false;
       }}
-      className="relative w-full h-[270px] sm:h-[300px] rounded-xl overflow-hidden border border-slate-800 bg-[#0b111e] cursor-grab active:cursor-grabbing select-none"
+      className="relative w-full h-[270px] sm:h-[300px] rounded-xl overflow-hidden border border-sky-200 bg-[#dcf0fe] cursor-grab active:cursor-grabbing select-none shadow-sm"
     >
       <div ref={mountRef} className="w-full h-full" />
-      <div className="pointer-events-none absolute bottom-2.5 right-3 text-[11px] text-slate-400">
+      <div className="pointer-events-none absolute bottom-2.5 right-3 px-2.5 py-1 rounded-md bg-white/85 border border-sky-200 text-[11px] font-medium text-sky-900">
         Arrastra para girar 360°
       </div>
     </div>

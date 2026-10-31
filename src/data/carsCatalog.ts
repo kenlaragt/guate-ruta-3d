@@ -2,6 +2,48 @@ import { CarModelId, CarSpec } from '../types/game';
 
 export const CARS_CATALOG: CarSpec[] = [
   {
+    id: 'cuatrimoto_el',
+    brand: 'EcoTrike EV',
+    name: 'Cuatrimoto Eléctrica EcoQuad',
+    yearTag: 'Estilo Triciclo Eléctrico · 48kW Cero Emisiones',
+    bodyStyle: 'electric_quad_trike',
+    horsepower: 68,
+    topSpeedKmh: 118,
+    accelFactor: 26,
+    handlingGrip: 1.08,
+    redlineRpm: 7200,
+    idleRpm: 600,
+    maxForwardGears: 6,
+    defaultPaint: '#06b6d4',
+    accentHex: '#facc15',
+    valueMessage: 'Respeto y Unión',
+    drivetrain: 'AWD',
+    engineTone: 'ev',
+    summary:
+      'Cuatrimoto eléctrica abierta estilo triciclo deportivo con arco protector, barra LED diurna, avatar 3D al mando y torque limpio.',
+  },
+  {
+    id: 'triciclo_el',
+    brand: 'SolarTrike 3R',
+    name: 'Triciclo Eléctrico Cabina Solar',
+    yearTag: 'Movilidad Eléctrica 3 Ruedas · Ágil y Ecológico',
+    bodyStyle: 'electric_tricycle',
+    horsepower: 48,
+    topSpeedKmh: 96,
+    accelFactor: 23,
+    handlingGrip: 1.1,
+    redlineRpm: 6800,
+    idleRpm: 550,
+    maxForwardGears: 6,
+    defaultPaint: '#10b981',
+    accentHex: '#38bdf8',
+    valueMessage: 'Empatía e Inclusión',
+    drivetrain: 'RWD',
+    engineTone: 'ev',
+    summary:
+      'Triciclo eléctrico urbano con techo solar panorámico, manubrio digital, piloto 3D visible y giro suave para pasear o competir.',
+  },
+  {
     id: 'tuk_tuk',
     brand: 'Bajaj Torito',
     name: 'Tuk Tuk Chapín 200cc',
@@ -16,10 +58,11 @@ export const CARS_CATALOG: CarSpec[] = [
     maxForwardGears: 6,
     defaultPaint: '#dc2626',
     accentHex: '#facc15',
+    valueMessage: 'Alegría y Servicio',
     drivetrain: 'RWD',
     engineTone: 'tuktuk_2stroke',
     summary:
-      'Auténtico Tuk Tuk guatemalteco de 3 ruedas con capota negra, timón de manubrio y giro ágil entre los pueblos.',
+      'Auténtico Tuk Tuk de 3 ruedas con capota negra, avatar conductor 3D, timón de manubrio y mensaje positivo en ruta.',
   },
   {
     id: 'bicicleta',
@@ -28,18 +71,19 @@ export const CARS_CATALOG: CarSpec[] = [
     yearTag: 'Ciclismo Real · 2 Ruedas y Pedales',
     bodyStyle: 'bicycle',
     horsepower: 4,
-    topSpeedKmh: 52,
-    accelFactor: 14,
+    topSpeedKmh: 54,
+    accelFactor: 15,
     handlingGrip: 1.12,
     redlineRpm: 4500,
     idleRpm: 500,
     maxForwardGears: 6,
     defaultPaint: '#0284c7',
     accentHex: '#f59e0b',
+    valueMessage: 'Vida Sana y Paz',
     drivetrain: 'RWD',
     engineTone: 'bicycle_chain',
     summary:
-      'Bicicleta con cuadro tubular, ruedas de rayos, ciclista 3D pedaleando en vivo y cambios de piñón.',
+      'Bicicleta con cuadro tubular, ruedas de rayos, avatar ciclista 3D pedaleando en vivo y banderín de valores.',
   },
   {
     id: 'pickup',
@@ -56,10 +100,11 @@ export const CARS_CATALOG: CarSpec[] = [
     maxForwardGears: 6,
     defaultPaint: '#2563eb',
     accentHex: '#0f172a',
+    valueMessage: 'Solidaridad en Ruta',
     drivetrain: 'AWD',
     engineTone: 'inline6_turbo',
     summary:
-      'Pickup 4x4 de doble cabina con palangana abierta, barra antivuelco con faros superiores y suspensión alta para todo terreno.',
+      'Pickup 4x4 doble cabina con avatar 3D al volante, palangana abierta, barra antivuelco con faros superiores y emblema de solidaridad.',
   },
   {
     id: 'camion',
@@ -76,10 +121,11 @@ export const CARS_CATALOG: CarSpec[] = [
     maxForwardGears: 6,
     defaultPaint: '#f8fafc',
     accentHex: '#b91c1c',
+    valueMessage: 'Trabajo y Hermandad',
     drivetrain: 'RWD',
     engineTone: 'diesel_truck',
     summary:
-      'Camión comercial con parrilla cromada, doble chimenea vertical, furgón trasero y torque diésel en caja mecánica.',
+      'Camión comercial con avatar conductor 3D en cabina, parrilla cromada, doble chimenea vertical y mensaje lateral de hermandad.',
   },
   {
     id: 'byd_f',
@@ -96,9 +142,11 @@ export const CARS_CATALOG: CarSpec[] = [
     maxForwardGears: 6,
     defaultPaint: '#0ea5e9',
     accentHex: '#38bdf8',
+    valueMessage: 'Armonía y Futuro',
     drivetrain: 'FWD',
     engineTone: 'inline4',
-    summary: 'Compacto urbano de radio de giro corto ideal para callejones empedrados y campus.',
+    summary:
+      'Compacto urbano con piloto 3D visible, radio de giro corto e insignia de armonía ideal para paseos escénicos.',
   },
   {
     id: 'toyota_corolla',
@@ -115,9 +163,10 @@ export const CARS_CATALOG: CarSpec[] = [
     maxForwardGears: 6,
     defaultPaint: '#f1f5f9',
     accentHex: '#dc2626',
+    valueMessage: 'Confianza y Respeto',
     drivetrain: 'FWD',
     engineTone: 'inline4',
-    summary: 'Equilibrio clásico de calle con suspensión firme para rutas nacionales y ciudad.',
+    summary: 'Equilibrio clásico de calle con avatar 3D al mando y suspensión firme para rutas y ciudad.',
   },
   {
     id: 'nissan_sentra',
@@ -134,9 +183,10 @@ export const CARS_CATALOG: CarSpec[] = [
     maxForwardGears: 6,
     defaultPaint: '#ea580c',
     accentHex: '#1e293b',
+    valueMessage: 'Amistad Sin Fronteras',
     drivetrain: 'FWD',
     engineTone: 'inline4',
-    summary: 'Sedán deportivo bitono con respuesta progresiva en caja mecánica de 6 cambios.',
+    summary: 'Sedán deportivo bitono con piloto 3D y respuesta progresiva en caja de 6 cambios.',
   },
   {
     id: 'toyota_gt',
@@ -153,9 +203,10 @@ export const CARS_CATALOG: CarSpec[] = [
     maxForwardGears: 6,
     defaultPaint: '#2563eb',
     accentHex: '#f8fafc',
+    valueMessage: 'Juego Limpio Siempre',
     drivetrain: 'RWD',
     engineTone: 'inline4',
-    summary: 'Centro de gravedad ultrabajo y tracción trasera precisa para curvas cerradas.',
+    summary: 'Centro de gravedad bajo, tracción trasera precisa y avatar deportivo 3D en cabina.',
   },
   {
     id: 'toyota_supra',
@@ -172,9 +223,10 @@ export const CARS_CATALOG: CarSpec[] = [
     maxForwardGears: 6,
     defaultPaint: '#eab308',
     accentHex: '#18181b',
+    valueMessage: 'Todos Valemos Igual',
     drivetrain: 'RWD',
     engineTone: 'inline6_turbo',
-    summary: 'Seis cilindros en línea turboalimentado con gran empuje en cada marcha.',
+    summary: 'Seis cilindros turboalimentado con avatar piloto 3D visible y emblema de igualdad.',
   },
   {
     id: 'nissan_calsonic',
@@ -192,9 +244,10 @@ export const CARS_CATALOG: CarSpec[] = [
     defaultPaint: '#0284c7',
     accentHex: '#ffffff',
     liveryNumber: '12',
+    valueMessage: 'Equipo y Gratitud',
     drivetrain: 'AWD',
     engineTone: 'rb26_race',
-    summary: 'Leyenda japonesa de circuito con librea azul #12, tracción integral y alerón GT.',
+    summary: 'Leyenda de circuito con librea azul #12, avatar piloto 3D con casco y tracción integral.',
   },
   {
     id: 'tesla',
@@ -211,10 +264,11 @@ export const CARS_CATALOG: CarSpec[] = [
     maxForwardGears: 6,
     defaultPaint: '#dc2626',
     accentHex: '#0f172a',
+    valueMessage: 'Innovación y Apoyo',
     drivetrain: 'AWD',
     engineTone: 'ev',
     summary:
-      'Torque eléctrico instantáneo y techo panorámico de cristal con aceleración fulminante.',
+      'Torque eléctrico instantáneo, cristal panorámico con avatar 3D visible y mensaje de apoyo mutuo.',
   },
   {
     id: 'lamborghini',
@@ -231,23 +285,25 @@ export const CARS_CATALOG: CarSpec[] = [
     maxForwardGears: 6,
     defaultPaint: '#65a30d',
     accentHex: '#18181b',
+    valueMessage: 'Unidos en Diversidad',
     drivetrain: 'AWD',
     engineTone: 'v10_scream',
-    summary: 'Superdeportivo italiano en cuña con motor V10 central de 8,500 RPM.',
+    summary: 'Superdeportivo en cuña con avatar piloto 3D al volante y motor V10 de 8,500 RPM.',
   },
 ];
 
 export const PAINT_SWATCHES = [
-  { name: 'Rojo Tuk Tuk / Escarlata', hex: '#dc2626' },
+  { name: 'Rojo Escarlata', hex: '#dc2626' },
+  { name: 'Cian Eléctrico', hex: '#06b6d4' },
   { name: 'Azul Calsonic', hex: '#0284c7' },
-  { name: 'Amarillo Supra', hex: '#eab308' },
+  { name: 'Amarillo Sol', hex: '#eab308' },
+  { name: 'Verde Esmeralda', hex: '#10b981' },
   { name: 'Verde Mantis', hex: '#65a30d' },
   { name: 'Blanco Perla', hex: '#f1f5f9' },
   { name: 'Naranja Monarca', hex: '#ea580c' },
   { name: 'Azul Zafiro GT', hex: '#2563eb' },
-  { name: 'Grafito Nocturno', hex: '#334155' },
 ];
 
 export function getCarById(id: string): CarSpec {
-  return CARS_CATALOG.find((c) => c.id === (id as CarModelId)) ?? CARS_CATALOG[7];
+  return CARS_CATALOG.find((c) => c.id === (id as CarModelId)) ?? CARS_CATALOG[0];
 }

@@ -1,5 +1,7 @@
 export type SessionMode = 'SOLO' | 'SPLIT_2P' | 'ONLINE_MULTI';
 
+export type DriveExperienceMode = 'FREE_ROAM' | 'RACE_4MIN';
+
 export type TransmissionType = 'AT' | 'MT';
 
 export type GearLabel = 'R' | 'N' | '1' | '2' | '3' | '4' | '5' | '6';
@@ -15,6 +17,8 @@ export type TimeOfDay = 'DAY' | 'GOLDEN' | 'NIGHT';
 export type GameState = 'TITLE_MENU' | 'PLAYING' | 'PAUSED' | 'ROUND_SUMMARY';
 
 export type CarModelId =
+  | 'cuatrimoto_el'
+  | 'triciclo_el'
   | 'byd_f'
   | 'toyota_corolla'
   | 'toyota_supra'
@@ -29,6 +33,8 @@ export type CarModelId =
   | 'camion';
 
 export type BodyStyle =
+  | 'electric_quad_trike'
+  | 'electric_tricycle'
   | 'compact_hatch'
   | 'sedan'
   | 'sport_coupe'
@@ -58,6 +64,7 @@ export interface CarSpec {
   defaultPaint: string;
   accentHex: string;
   liveryNumber?: string;
+  valueMessage: string;
   drivetrain: 'FWD' | 'RWD' | 'AWD';
   engineTone:
     | 'ev'
@@ -100,20 +107,29 @@ export interface RoadSegmentSpec {
   isMainArtery?: boolean;
 }
 
+export type LandmarkKind =
+  | 'arch_catalina'
+  | 'stone_bridge'
+  | 'university_hall'
+  | 'campus_skybridge'
+  | 'monument_spire'
+  | 'modern_congress'
+  | 'coastal_lighthouse'
+  | 'central_plaza'
+  | 'zoo_gate'
+  | 'race_grandstand'
+  | 'cristo_redentor'
+  | 'maya_pyramid'
+  | 'white_basilica'
+  | 'colonial_cathedral'
+  | 'puerta_alcala'
+  | 'sagrada_torres'
+  | 'cn_tower';
+
 export interface LandmarkSpec {
   id: string;
   name: string;
-  kind:
-    | 'arch_catalina'
-    | 'stone_bridge'
-    | 'university_hall'
-    | 'campus_skybridge'
-    | 'monument_spire'
-    | 'modern_congress'
-    | 'coastal_lighthouse'
-    | 'central_plaza'
-    | 'zoo_gate'
-    | 'race_grandstand';
+  kind: LandmarkKind;
   x: number;
   z: number;
   rotationY?: number;
@@ -148,10 +164,43 @@ export interface AwardDeliveryRecord {
   presenterName: string;
   presenterRole: string;
   awardTitle: string;
-  awardKind: 'MEDAL_BRONZE' | 'MEDAL_SILVER' | 'TROPHY_GOLD' | 'SUPER_GOLD_DIAMONDS';
+  awardKind:
+    | 'MEDAL_BRONZE'
+    | 'MEDAL_SILVER'
+    | 'TROPHY_GOLD'
+    | 'SUPER_GOLD_DIAMONDS'
+    | 'PARTICIPATION_ALL_WIN';
   photoUrl: string;
   photoCropSlot?: number;
   timestamp: number;
+}
+
+export interface RaceParticipantSummary {
+  id: string;
+  alias: string;
+  vehicleName: string;
+  valueMessage: string;
+  checkpoints: number;
+  medalTitle: string;
+  isHuman: boolean;
+  isOnlinePeer?: boolean;
+}
+
+export interface RaceHistoryRecord {
+  id: string;
+  dateIso: string;
+  timestamp: number;
+  mapId: string;
+  mapName: string;
+  totalMedalsEarned: number;
+  driveMode?: DriveExperienceMode;
+  elapsedSec?: number;
+}
+
+export interface LocalPersistenceStats {
+  totalKilometersDriven: number;
+  unlockedCarIds: CarModelId[];
+  totalMedalsObtained: number;
 }
 
 export interface WorldMapSpec {
@@ -163,6 +212,7 @@ export interface WorldMapSpec {
   group: RegionGroup;
   centerLat: number;
   centerLon: number;
+  culturalHeritageTitle: string;
   gmpProhibitedTerritory?: boolean;
   /** True when this destination is a Zoo / Safari reserve with full animal enclosures */
   isZooSafari?: boolean;
@@ -193,6 +243,7 @@ export interface RemoteOnlinePlayer {
   alias: string;
   carId: CarModelId;
   paintHex: string;
+  valueMessage?: string;
   x: number;
   z: number;
   heading: number;
@@ -221,10 +272,17 @@ export interface PlayerHudTelemetry {
   totalCheckpoints: number;
   lapTimeSec: number;
   nitroPct: number;
+  driveMode: DriveExperienceMode;
+  raceRemainingSec: number;
+  addTimeBonusSec: number;
+  nextCheckpointDistMeters: number;
+  nextCheckpointRelAngleRad: number;
+  participantCount: number;
   currentPresenterName?: string;
   currentAwardTitle?: string;
   p2SpeedKmh?: number;
   p2Gear?: GearLabel;
   p2Rpm?: number;
   p2StreetName?: string;
+  p2CheckpointsCollected?: number;
 }

@@ -5,8 +5,10 @@ import {
 } from '../data/awardsCatalog';
 import { CarSpec, HouseStyle, LandmarkSpec } from '../types/game';
 import {
+  createAvatarFaceTexture,
   createDriverLabelSprite,
   createNumberDoorTexture,
+  createValueMessageDecalTexture,
   ProceduralTexturePack,
 } from './proceduralTextures';
 
@@ -47,7 +49,7 @@ function createLicensePlateTexture(plateCode: string): THREE.CanvasTexture {
   ctx.fillStyle = '#ffffff';
   ctx.font = 'bold 15px Plus Jakarta Sans, sans-serif';
   ctx.textAlign = 'center';
-  ctx.fillText('GUATEMALA · C.A.', 128, 17);
+  ctx.fillText('AMÉRICA · EUROPA 3D', 128, 17);
   ctx.fillStyle = '#0f172a';
   ctx.font = 'bold 44px JetBrains Mono, monospace';
   ctx.fillText(plateCode, 128, 72);
@@ -98,7 +100,6 @@ function createMetaBannerSprite(
 
 function applyHorizontalUvSlice(geo: THREE.PlaneGeometry, uMin: number, uMax: number, vMin = 0.04, vMax = 0.98) {
   const uv = geo.attributes.uv as THREE.BufferAttribute;
-  // Standard PlaneGeometry vertex order: (0: top-left, 1: top-right, 2: bottom-left, 3: bottom-right)
   uv.setXY(0, uMin, vMax);
   uv.setXY(1, uMax, vMax);
   uv.setXY(2, uMin, vMin);
@@ -106,8 +107,102 @@ function applyHorizontalUvSlice(geo: THREE.PlaneGeometry, uMin: number, uMax: nu
   uv.needsUpdate = true;
 }
 
+const AVATAR_SKIN_TONES = ['#f4c7ab', '#d6956a', '#9c6137', '#e8b48f', '#c68652', '#f9dfd0'];
+const AVATAR_HAIR_COLORS = [0x1e293b, 0x451a03, 0x78350f, 0x0f172a, 0x92400e];
+
+/**
+ * Cover-Art-Style 3D Driver Avatar seated at the controls (-Z forward),
+ * with expressive smiling face, diverse skin tone, cap/helmet/hair, jacket, and arms reaching the wheel/bar.
+ */
+function createCoverArtDriverAvatar3D(
+  seed: number,
+  jacketHex: string,
+  accentHex: string,
+  headgear: 'cap' | 'helmet' | 'visor',
+  scaleFactor: number,
+  disposables: Array<{ dispose: () => void }>,
+): THREE.Group {
+  const avatar = new THREE.Group();
+  const skinHex = AVATAR_SKIN_TONES[Math.abs(seed) % AVATAR_SKIN_TONES.length];
+  const faceTex = createAvatarFaceTexture(skinHex, seed % 3 === 1);
+  const skinMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(skinHex), roughness: 0.58 });
+  const faceMat = new THREE.MeshStandardMaterial({ map: faceTex, roughness: 0.55 });
+  const jacketMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(jacketHex), roughness: 0.52 });
+  const accentMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(accentHex), roughness: 0.42 });
+  const hairMat = new THREE.MeshStandardMaterial({
+    color: AVATAR_HAIR_COLORS[Math.abs(seed) % AVATAR_HAIR_COLORS.length],
+    roughness: 0.78,
+  });
+
+  // Torso + sporty chest stripe
+  const torsoGeo = new THREE.CapsuleGeometry(0.155, 0.28, 6, 12);
+  const torso = new THREE.Mesh(torsoGeo, jacketMat);
+  torso.position.set(0, 0.24, 0);
+
+  const collarGeo = new THREE.CylinderGeometry(0.12, 0.145, 0.07, 12);
+  const collar = new THREE.Mesh(collarGeo, accentMat);
+  collar.position.set(0, 0.42, 0);
+
+  // Expressive 3D Head facing -Z (Sphere UV seam is at +Z, center u=0.5 faces +X by default, so rotateY(+PI/2) faces -Z)
+  const headGeo = new THREE.SphereGeometry(0.135, 16, 14);
+  const head = new THREE.Mesh(headGeo, faceMat);
+  head.position.set(0, 0.57, -0.01);
+  head.rotation.y = Math.PI / 2;
+
+  avatar.add(torso, collar, head);
+
+  // Hair + Cap / Helmet / Visor
+  const hairBackGeo = new THREE.SphereGeometry(0.142, 14, 10, 0, Math.PI * 2, 0, Math.PI * 0.58);
+  const hairBack = new THREE.Mesh(hairBackGeo, headgear === 'helmet' ? accentMat : hairMat);
+  hairBack.position.set(0, 0.585, 0.008);
+  hairBack.rotation.x = -0.18;
+  avatar.add(hairBack);
+
+  const brimGeo = new THREE.CylinderGeometry(0.145, 0.155, 0.025, 14, 1, false, -Math.PI * 0.45, Math.PI * 0.9);
+  const brim = new THREE.Mesh(brimGeo, accentMat);
+  brim.position.set(0, 0.625, -0.055);
+  brim.rotation.y = Math.PI;
+  brim.rotation.x = -0.15;
+  avatar.add(brim);
+
+  // Arms reaching forward toward wheel / handlebars (-Z)
+  const armGeo = new THREE.CapsuleGeometry(0.046, 0.26, 5, 8);
+  const handGeo = new THREE.SphereGeometry(0.048, 8, 8);
+  for (const side of [-1, 1]) {
+    const arm = new THREE.Mesh(armGeo, jacketMat);
+    arm.position.set(side * 0.175, 0.33, -0.14);
+    arm.rotation.x = Math.PI * 0.38;
+    arm.rotation.z = side * -0.16;
+
+    const hand = new THREE.Mesh(handGeo, skinMat);
+    hand.position.set(side * 0.145, 0.27, -0.29);
+    avatar.add(arm, hand);
+  }
+
+  avatar.scale.setScalar(scaleFactor);
+
+  disposables.push(
+    faceTex,
+    skinMat,
+    faceMat,
+    jacketMat,
+    accentMat,
+    hairMat,
+    torsoGeo,
+    collarGeo,
+    headGeo,
+    hairBackGeo,
+    brimGeo,
+    armGeo,
+    handGeo,
+  );
+
+  return avatar;
+}
+
 // ============================================================================
-// REALISTIC MULTI-PART VEHICLES: CARS, TUK-TUK, BICYCLE & HEAVY TRUCK
+// REALISTIC MULTI-PART VEHICLES WITH 3D AVATARS & VALUE MESSAGES:
+// BICYCLE, ELECTRIC QUAD-TRIKE, ELECTRIC TRICYCLE, TUK-TUK, PICKUP, TRUCK & CARS
 // ============================================================================
 export function createRealisticCarRig(
   spec: CarSpec,
@@ -115,9 +210,16 @@ export function createRealisticCarRig(
   contactShadowTex: THREE.CanvasTexture,
   isSoftwareGl: boolean,
   driverAlias?: string,
+  customValueMessage?: string,
 ): CarRig3D {
   const group = new THREE.Group();
   const disposables: Array<{ dispose: () => void }> = [];
+
+  const activeValueMessage = customValueMessage || spec.valueMessage || 'Respeto y Unión';
+  const avatarSeed =
+    (driverAlias || spec.id)
+      .split('')
+      .reduce((acc, ch) => acc + ch.charCodeAt(0), 0) + spec.horsepower;
 
   const bodyColor = new THREE.Color(paintHex || spec.defaultPaint);
   const paintMat = new THREE.MeshPhysicalMaterial({
@@ -142,20 +244,26 @@ export function createRealisticCarRig(
     metalness: 0.94,
     roughness: 0.14,
   });
+  // Crystal sky-tinted transparent cabin glass so 3D driver avatars inside every vehicle are clearly visible!
   const glassMat = new THREE.MeshPhysicalMaterial({
-    color: 0x1e293b,
-    metalness: 0.12,
-    roughness: 0.07,
-    transmission: isSoftwareGl ? 0 : 0.72,
+    color: 0xbae6fd,
+    metalness: 0.08,
+    roughness: 0.06,
     transparent: true,
-    opacity: isSoftwareGl ? 0.58 : 0.88,
-    ior: 1.5,
+    opacity: isSoftwareGl ? 0.34 : 0.38,
+    depthWrite: false,
   });
   const headlightMat = new THREE.MeshStandardMaterial({
     color: 0xf8fafc,
     emissive: new THREE.Color(0xe0f2fe),
     emissiveIntensity: 2.0,
     roughness: 0.12,
+  });
+  const evCyanGlowMat = new THREE.MeshStandardMaterial({
+    color: 0x38bdf8,
+    emissive: new THREE.Color(0x0ea5e9),
+    emissiveIntensity: 1.65,
+    roughness: 0.2,
   });
   const brakeLightMat = new THREE.MeshStandardMaterial({
     color: 0xef4444,
@@ -180,6 +288,19 @@ export function createRealisticCarRig(
     roughness: 0.32,
   });
 
+  // Value Message Livery Badge Texture shared on vehicle sides / rear
+  const valueDecalTex = createValueMessageDecalTexture(
+    activeValueMessage,
+    spec.accentHex || paintHex || '#38bdf8',
+  );
+  const valueDecalMat = new THREE.MeshStandardMaterial({
+    map: valueDecalTex,
+    roughness: 0.28,
+    metalness: 0.08,
+    polygonOffset: true,
+    polygonOffsetFactor: -2,
+  });
+
   disposables.push(
     paintMat,
     trimMat,
@@ -187,19 +308,53 @@ export function createRealisticCarRig(
     chromeMat,
     glassMat,
     headlightMat,
+    evCyanGlowMat,
     brakeLightMat,
     amberBlinkerMat,
     tireMat,
     caliperMat,
+    valueDecalTex,
+    valueDecalMat,
   );
+
+  const attachSideAndRearValueBadges = (
+    sideX: number,
+    sideY: number,
+    sideZ: number,
+    badgeW: number,
+    badgeH: number,
+    rearPos?: { y: number; z: number; w: number; h: number },
+  ) => {
+    const sideGeo = new THREE.PlaneGeometry(badgeW, badgeH);
+    const leftBadge = new THREE.Mesh(sideGeo, valueDecalMat);
+    leftBadge.position.set(-sideX, sideY, sideZ);
+    leftBadge.rotation.y = -Math.PI / 2;
+
+    const rightBadge = new THREE.Mesh(sideGeo, valueDecalMat);
+    rightBadge.position.set(sideX, sideY, sideZ);
+    rightBadge.rotation.y = Math.PI / 2;
+
+    group.add(leftBadge, rightBadge);
+    disposables.push(sideGeo);
+
+    if (rearPos) {
+      const rearGeo = new THREE.PlaneGeometry(rearPos.w, rearPos.h);
+      const rearBadge = new THREE.Mesh(rearGeo, valueDecalMat);
+      rearBadge.position.set(0, rearPos.y, rearPos.z);
+      group.add(rearBadge);
+      disposables.push(rearGeo);
+    }
+  };
 
   const attachDriverTag = (topY: number) => {
     if (!driverAlias) return;
     const labelSprite = createDriverLabelSprite(
       driverAlias,
-      `${spec.brand} ${spec.name.replace(spec.brand, '').trim()}`,
+      spec.name,
       paintHex || spec.defaultPaint,
+      activeValueMessage,
     );
+    labelSprite.name = 'driverLabelSprite';
     labelSprite.position.set(0, topY, 0);
     group.add(labelSprite);
     disposables.push({
@@ -211,7 +366,7 @@ export function createRealisticCarRig(
   };
 
   // ==========================================================================
-  // SPECIAL VEHICLE A: BICYCLE WITH 3D CYCLIST ("Bicicleta")
+  // SPECIAL VEHICLE A: BICYCLE WITH 3D AVATAR CYCLIST ("Bicicleta")
   // ==========================================================================
   if (spec.bodyStyle === 'bicycle') {
     const shadowGeo = new THREE.PlaneGeometry(0.85, 2.1);
@@ -259,7 +414,6 @@ export function createRealisticCarRig(
     rearWheel.position.set(0, wheelR, 0.56);
     group.add(frontLeftPivot, frontRightPivot, rearWheel);
 
-    // Diamond Tubular Frame
     const tubeGeo = new THREE.CylinderGeometry(0.02, 0.02, 1, 8);
     const addTube = (ax: number, ay: number, az: number, bx: number, by: number, bz: number, mat: THREE.Material) => {
       const vA = new THREE.Vector3(ax, ay, az);
@@ -271,7 +425,6 @@ export function createRealisticCarRig(
       m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), vB.clone().sub(vA).normalize());
       group.add(m);
     };
-    // Seat tube, top tube, down tube, chainstays, seatstays, head tube & fork
     addTube(0, 0.34, 0.08, 0, 0.88, 0.22, paintMat);
     addTube(0, 0.84, 0.2, 0, 0.86, -0.42, paintMat);
     addTube(0, 0.34, 0.08, 0, 0.78, -0.44, paintMat);
@@ -283,7 +436,6 @@ export function createRealisticCarRig(
     addTube(0.05, 0.34, -0.56, 0, 0.86, -0.42, chromeMat);
     disposables.push(tubeGeo);
 
-    // Saddle & Rear Safety LED
     const saddleGeo = new THREE.BoxGeometry(0.16, 0.05, 0.28);
     const saddle = new THREE.Mesh(saddleGeo, carbonMat);
     saddle.position.set(0, 0.92, 0.24);
@@ -293,7 +445,14 @@ export function createRealisticCarRig(
     group.add(saddle, tailLed);
     disposables.push(saddleGeo, tailLedGeo);
 
-    // Handlebars (Cockpit Steering)
+    // Value banner pennant on rear rack of bicycle
+    attachSideAndRearValueBadges(0.09, 0.72, 0.42, 0.52, 0.14, {
+      y: 0.74,
+      z: 0.72,
+      w: 0.48,
+      h: 0.13,
+    });
+
     const cockpitWheel = new THREE.Group();
     cockpitWheel.position.set(0, 0.98, -0.45);
     const barGeo = new THREE.CylinderGeometry(0.016, 0.016, 0.56, 10);
@@ -307,7 +466,6 @@ export function createRealisticCarRig(
     group.add(cockpitWheel);
     disposables.push(barGeo, lampGeo);
 
-    // Crankset + Pedals + Articulated 3D Cyclist
     const crankGroup = new THREE.Group();
     crankGroup.position.set(0, 0.34, 0.08);
     const chainRingGeo = new THREE.CylinderGeometry(0.09, 0.09, 0.015, 16);
@@ -315,25 +473,18 @@ export function createRealisticCarRig(
     crankGroup.add(new THREE.Mesh(chainRingGeo, chromeMat));
     group.add(crankGroup);
 
-    const skinMat = new THREE.MeshStandardMaterial({ color: 0xd99b72, roughness: 0.65 });
+    const cyclistAvatar = createCoverArtDriverAvatar3D(
+      avatarSeed,
+      paintHex || spec.defaultPaint,
+      spec.accentHex || '#facc15',
+      'helmet',
+      1.04,
+      disposables,
+    );
+    cyclistAvatar.position.set(0, 0.98, 0.12);
+    cyclistAvatar.rotation.x = -0.36;
+
     const shortsMat = new THREE.MeshStandardMaterial({ color: 0x0f172a, roughness: 0.7 });
-    const jerseyMat = new THREE.MeshStandardMaterial({ color: bodyColor, roughness: 0.55 });
-    const torsoGeo = new THREE.CapsuleGeometry(0.16, 0.38, 6, 12);
-    const torso = new THREE.Mesh(torsoGeo, jerseyMat);
-    torso.position.set(0, 1.24, 0.02);
-    torso.rotation.x = -0.58;
-
-    const headGeo = new THREE.SphereGeometry(0.12, 14, 12);
-    const head = new THREE.Mesh(headGeo, skinMat);
-    head.position.set(0, 1.54, -0.18);
-    const helmetGeo = new THREE.SphereGeometry(0.135, 14, 10, 0, Math.PI * 2, 0, Math.PI * 0.55);
-    const helmet = new THREE.Mesh(helmetGeo, trimMat);
-    helmet.position.set(0, 1.56, -0.18);
-
-    // Cyclist arms reaching handlebars
-    addTube(-0.16, 1.36, -0.1, -0.22, 0.99, -0.44, skinMat);
-    addTube(0.16, 1.36, -0.1, 0.22, 0.99, -0.44, skinMat);
-
     const legGeo = new THREE.CapsuleGeometry(0.065, 0.42, 5, 8);
     legGeo.translate(0, -0.22, 0);
     const leftLeg = new THREE.Group();
@@ -344,19 +495,10 @@ export function createRealisticCarRig(
     rightLeg.position.set(0.11, 0.92, 0.2);
     rightLeg.add(new THREE.Mesh(legGeo, shortsMat));
 
-    group.add(torso, head, helmet, leftLeg, rightLeg);
-    disposables.push(
-      chainRingGeo,
-      skinMat,
-      shortsMat,
-      jerseyMat,
-      torsoGeo,
-      headGeo,
-      helmetGeo,
-      legGeo,
-    );
+    group.add(cyclistAvatar, leftLeg, rightLeg);
+    disposables.push(chainRingGeo, shortsMat, legGeo);
 
-    attachDriverTag(1.98);
+    attachDriverTag(2.08);
 
     return {
       group,
@@ -371,7 +513,361 @@ export function createRealisticCarRig(
   }
 
   // ==========================================================================
-  // SPECIAL VEHICLE B: AUTHENTIC 3-WHEEL GUATEMALAN TUK-TUK ("Tuk Tuk")
+  // SPECIAL VEHICLE B1: ELECTRIC QUAD-TRIKE ("Cuatrimoto Eléctrica EcoQuad")
+  // ==========================================================================
+  if (spec.bodyStyle === 'electric_quad_trike') {
+    const width = 1.48;
+    const length = 2.42;
+    const shadowGeo = new THREE.PlaneGeometry(width * 1.45, length * 1.32);
+    const shadowMat = new THREE.MeshBasicMaterial({
+      map: contactShadowTex,
+      transparent: true,
+      depthWrite: false,
+      opacity: 0.64,
+    });
+    const shadowPlane = new THREE.Mesh(shadowGeo, shadowMat);
+    shadowPlane.rotation.x = -Math.PI / 2;
+    shadowPlane.position.y = 0.02;
+    group.add(shadowPlane);
+
+    // Lower EV battery skateboard deck + glowing cyan EV side strips
+    const deckGeo = new THREE.BoxGeometry(width * 0.72, 0.22, length * 0.78);
+    const deck = new THREE.Mesh(deckGeo, carbonMat);
+    deck.position.set(0, 0.34, 0.04);
+
+    const evStripGeo = new THREE.BoxGeometry(width * 0.76, 0.045, length * 0.66);
+    const evStrip = new THREE.Mesh(evStripGeo, evCyanGlowMat);
+    evStrip.position.set(0, 0.36, 0.04);
+
+    // Sculpted Front Nose Hood + Sport Straddle Seat + Rear Cargo Rack
+    const noseGeo = new THREE.BoxGeometry(width * 0.68, 0.36, 0.86);
+    const nose = new THREE.Mesh(noseGeo, paintMat);
+    nose.position.set(0, 0.62, -0.68);
+    nose.rotation.x = 0.14;
+
+    const rearCowlingGeo = new THREE.BoxGeometry(width * 0.76, 0.34, 0.88);
+    const rearCowling = new THREE.Mesh(rearCowlingGeo, paintMat);
+    rearCowling.position.set(0, 0.62, 0.62);
+
+    const saddleGeo = new THREE.BoxGeometry(0.46, 0.22, 0.82);
+    const saddle = new THREE.Mesh(saddleGeo, carbonMat);
+    saddle.position.set(0, 0.78, 0.14);
+
+    // Sporty Open-Air Roll-Cage Halo Bar (Triciclo/Cuatrimoto Eléctrica Urbana)
+    const archGeo = new THREE.TorusGeometry(width * 0.36, 0.032, 10, 20, Math.PI);
+    const rearHalo = new THREE.Mesh(archGeo, trimMat);
+    rearHalo.position.set(0, 1.15, 0.56);
+
+    const pillarGeo = new THREE.CylinderGeometry(0.028, 0.028, 0.62, 8);
+    const pilL = new THREE.Mesh(pillarGeo, carbonMat);
+    pilL.position.set(-width * 0.36, 0.86, 0.56);
+    const pilR = new THREE.Mesh(pillarGeo, carbonMat);
+    pilR.position.set(width * 0.36, 0.86, 0.56);
+
+    // Front LED Halo Lightbar + Rear Taillights
+    const ledBarGeo = new THREE.BoxGeometry(0.76, 0.09, 0.08);
+    const ledBar = new THREE.Mesh(ledBarGeo, headlightMat);
+    ledBar.position.set(0, 0.68, -1.11);
+
+    const tlGeo = new THREE.BoxGeometry(0.28, 0.09, 0.06);
+    const tlL = new THREE.Mesh(tlGeo, brakeLightMat);
+    tlL.position.set(-0.34, 0.66, 1.07);
+    const tlR = new THREE.Mesh(tlGeo, brakeLightMat);
+    tlR.position.set(0.34, 0.66, 1.07);
+
+    // 4 Rugged Electric Quad Wheels + Sculpted Fenders
+    const wR = 0.31;
+    const tGeo = new THREE.CylinderGeometry(wR, wR, 0.22, 18);
+    tGeo.rotateZ(Math.PI / 2);
+    const rGeo = new THREE.CylinderGeometry(wR * 0.58, wR * 0.58, 0.24, 12);
+    rGeo.rotateZ(Math.PI / 2);
+    const fenderGeo = new THREE.BoxGeometry(0.3, 0.06, 0.58);
+
+    const buildQuadWheel = () => {
+      const wg = new THREE.Group();
+      wg.add(new THREE.Mesh(tGeo, tireMat));
+      wg.add(new THREE.Mesh(rGeo, chromeMat));
+      return wg;
+    };
+
+    const frontLeftPivot = new THREE.Group();
+    frontLeftPivot.position.set(-width * 0.46, wR, -0.78);
+    const flW = buildQuadWheel();
+    frontLeftPivot.add(flW);
+
+    const frontRightPivot = new THREE.Group();
+    frontRightPivot.position.set(width * 0.46, wR, -0.78);
+    const frW = buildQuadWheel();
+    frontRightPivot.add(frW);
+
+    const rlW = buildQuadWheel();
+    rlW.position.set(-width * 0.46, wR, 0.78);
+    const rrW = buildQuadWheel();
+    rrW.position.set(width * 0.46, wR, 0.78);
+
+    for (const fx of [-width * 0.46, width * 0.46]) {
+      for (const fz of [-0.78, 0.78]) {
+        const fnd = new THREE.Mesh(fenderGeo, paintMat);
+        fnd.position.set(fx, wR * 2 + 0.06, fz);
+        group.add(fnd);
+      }
+    }
+
+    // Digital EV Handlebar + Open-Air 3D Driver Avatar
+    const cockpitWheel = new THREE.Group();
+    cockpitWheel.position.set(0, 1.02, -0.44);
+    const hBarGeo = new THREE.CylinderGeometry(0.02, 0.02, 0.66, 10);
+    hBarGeo.rotateZ(Math.PI / 2);
+    const screenGeo = new THREE.BoxGeometry(0.18, 0.1, 0.03);
+    const screenMesh = new THREE.Mesh(screenGeo, evCyanGlowMat);
+    screenMesh.position.set(0, 0.06, 0);
+    cockpitWheel.add(new THREE.Mesh(hBarGeo, chromeMat), screenMesh);
+
+    const quadAvatar = createCoverArtDriverAvatar3D(
+      avatarSeed,
+      spec.accentHex || '#0284c7',
+      paintHex || spec.defaultPaint,
+      'helmet',
+      1.08,
+      disposables,
+    );
+    quadAvatar.position.set(0, 0.82, -0.06);
+
+    group.add(
+      deck,
+      evStrip,
+      nose,
+      rearCowling,
+      saddle,
+      rearHalo,
+      pilL,
+      pilR,
+      ledBar,
+      tlL,
+      tlR,
+      frontLeftPivot,
+      frontRightPivot,
+      rlW,
+      rrW,
+      cockpitWheel,
+      quadAvatar,
+    );
+
+    attachSideAndRearValueBadges(width * 0.39, 0.62, 0.62, 0.78, 0.18, {
+      y: 0.86,
+      z: 1.08,
+      w: 0.86,
+      h: 0.2,
+    });
+
+    disposables.push(
+      shadowGeo,
+      shadowMat,
+      deckGeo,
+      evStripGeo,
+      noseGeo,
+      rearCowlingGeo,
+      saddleGeo,
+      archGeo,
+      pillarGeo,
+      ledBarGeo,
+      tlGeo,
+      tGeo,
+      rGeo,
+      fenderGeo,
+      hBarGeo,
+      screenGeo,
+    );
+
+    attachDriverTag(2.12);
+
+    return {
+      group,
+      frontLeftPivot,
+      frontRightPivot,
+      wheelMeshes: [flW, frW, rlW, rrW],
+      cockpitWheel,
+      brakeLights: brakeLightMat,
+      dispose: () => disposables.forEach((d) => d.dispose()),
+    };
+  }
+
+  // ==========================================================================
+  // SPECIAL VEHICLE B2: ELECTRIC SOLAR TRICYCLE ("Triciclo Eléctrico Cabina Solar")
+  // ==========================================================================
+  if (spec.bodyStyle === 'electric_tricycle') {
+    const width = 1.38;
+    const length = 2.62;
+    const shadowGeo = new THREE.PlaneGeometry(width * 1.44, length * 1.28);
+    const shadowMat = new THREE.MeshBasicMaterial({
+      map: contactShadowTex,
+      transparent: true,
+      depthWrite: false,
+      opacity: 0.64,
+    });
+    const shadowPlane = new THREE.Mesh(shadowGeo, shadowMat);
+    shadowPlane.rotation.x = -Math.PI / 2;
+    shadowPlane.position.y = 0.02;
+    group.add(shadowPlane);
+
+    const floorGeo = new THREE.BoxGeometry(width * 0.9, 0.18, length * 0.76);
+    const floor = new THREE.Mesh(floorGeo, carbonMat);
+    floor.position.set(0, 0.28, 0.12);
+
+    const rearPodGeo = new THREE.BoxGeometry(width, 0.66, 1.18);
+    const rearPod = new THREE.Mesh(rearPodGeo, paintMat);
+    rearPod.position.set(0, 0.62, 0.56);
+
+    const frontNoseGeo = new THREE.CylinderGeometry(0.42, 0.56, 0.82, 16, 1, false, -Math.PI * 0.55, Math.PI * 1.1);
+    frontNoseGeo.rotateY(Math.PI);
+    const frontNose = new THREE.Mesh(frontNoseGeo, paintMat);
+    frontNose.position.set(0, 0.64, -0.68);
+
+    // Panoramic Transparent Windshield + Curved Solar Panel Canopy (Open Sides so 3D Avatar Shines!)
+    const wsGeo = new THREE.PlaneGeometry(0.98, 0.66);
+    const ws = new THREE.Mesh(wsGeo, glassMat);
+    ws.position.set(0, 1.22, -0.78);
+    ws.rotation.x = -0.24;
+
+    const solarRoofGeo = new THREE.BoxGeometry(width * 0.94, 0.09, 1.88);
+    const solarRoof = new THREE.Mesh(solarRoofGeo, paintMat);
+    solarRoof.position.set(0, 1.66, 0.08);
+
+    const solarPanelGeo = new THREE.PlaneGeometry(width * 0.82, 1.66);
+    solarPanelGeo.rotateX(-Math.PI / 2);
+    const solarPanelMat = new THREE.MeshStandardMaterial({
+      color: 0x0f172a,
+      metalness: 0.78,
+      roughness: 0.18,
+    });
+    const solarPanel = new THREE.Mesh(solarPanelGeo, solarPanelMat);
+    solarPanel.position.set(0, 1.71, 0.08);
+
+    const archPostGeo = new THREE.CylinderGeometry(0.028, 0.028, 1.02, 8);
+    for (const px of [-width * 0.42, width * 0.42]) {
+      for (const pz of [-0.68, 0.88]) {
+        const post = new THREE.Mesh(archPostGeo, chromeMat);
+        post.position.set(px, 1.15, pz);
+        group.add(post);
+      }
+    }
+
+    // Futuristic Cyan EV Halo & Headlight + Taillights
+    const hlHaloGeo = new THREE.TorusGeometry(0.14, 0.028, 10, 20);
+    const hlHalo = new THREE.Mesh(hlHaloGeo, evCyanGlowMat);
+    hlHalo.position.set(0, 0.68, -1.14);
+
+    const tlGeo = new THREE.BoxGeometry(0.32, 0.1, 0.06);
+    const tlL = new THREE.Mesh(tlGeo, brakeLightMat);
+    tlL.position.set(-0.42, 0.64, 1.16);
+    const tlR = new THREE.Mesh(tlGeo, brakeLightMat);
+    tlR.position.set(0.42, 0.64, 1.16);
+
+    // 3 EV Wheels (1 Steered Front Wheel + 2 Rear Wheels)
+    const wR = 0.26;
+    const tGeo = new THREE.CylinderGeometry(wR, wR, 0.17, 18);
+    tGeo.rotateZ(Math.PI / 2);
+    const rGeo = new THREE.CylinderGeometry(wR * 0.62, wR * 0.62, 0.19, 12);
+    rGeo.rotateZ(Math.PI / 2);
+
+    const buildTrikeWheel = () => {
+      const wg = new THREE.Group();
+      wg.add(new THREE.Mesh(tGeo, tireMat));
+      wg.add(new THREE.Mesh(rGeo, chromeMat));
+      return wg;
+    };
+
+    const frontLeftPivot = new THREE.Group();
+    frontLeftPivot.position.set(0, wR, -1.0);
+    const fw = buildTrikeWheel();
+    const fenderGeo = new THREE.SphereGeometry(0.3, 14, 10, 0, Math.PI * 2, 0, Math.PI * 0.55);
+    const fender = new THREE.Mesh(fenderGeo, trimMat);
+    fender.position.set(0, 0.05, 0);
+    frontLeftPivot.add(fw, fender);
+
+    const frontRightPivot = new THREE.Group();
+    frontRightPivot.position.set(0, wR, -1.0);
+
+    const rlW = buildTrikeWheel();
+    rlW.position.set(-width * 0.48, wR, 0.78);
+    const rrW = buildTrikeWheel();
+    rrW.position.set(width * 0.48, wR, 0.78);
+
+    const cockpitWheel = new THREE.Group();
+    cockpitWheel.position.set(0, 0.98, -0.54);
+    const hBarGeo = new THREE.CylinderGeometry(0.018, 0.018, 0.54, 10);
+    hBarGeo.rotateZ(Math.PI / 2);
+    cockpitWheel.add(new THREE.Mesh(hBarGeo, chromeMat));
+
+    const trikeAvatar = createCoverArtDriverAvatar3D(
+      avatarSeed + 3,
+      '#f59e0b',
+      paintHex || spec.defaultPaint,
+      'visor',
+      1.05,
+      disposables,
+    );
+    trikeAvatar.position.set(0, 0.78, -0.18);
+
+    group.add(
+      floor,
+      rearPod,
+      frontNose,
+      ws,
+      solarRoof,
+      solarPanel,
+      hlHalo,
+      tlL,
+      tlR,
+      frontLeftPivot,
+      frontRightPivot,
+      rlW,
+      rrW,
+      cockpitWheel,
+      trikeAvatar,
+    );
+
+    attachSideAndRearValueBadges(width * 0.51, 0.64, 0.56, 0.86, 0.2, {
+      y: 0.82,
+      z: 1.16,
+      w: 0.92,
+      h: 0.22,
+    });
+
+    disposables.push(
+      shadowGeo,
+      shadowMat,
+      floorGeo,
+      rearPodGeo,
+      frontNoseGeo,
+      wsGeo,
+      solarRoofGeo,
+      solarPanelGeo,
+      solarPanelMat,
+      archPostGeo,
+      hlHaloGeo,
+      tlGeo,
+      tGeo,
+      rGeo,
+      fenderGeo,
+      hBarGeo,
+    );
+
+    attachDriverTag(2.16);
+
+    return {
+      group,
+      frontLeftPivot,
+      frontRightPivot,
+      wheelMeshes: [fw, rlW, rrW],
+      cockpitWheel,
+      brakeLights: brakeLightMat,
+      dispose: () => disposables.forEach((d) => d.dispose()),
+    };
+  }
+
+  // ==========================================================================
+  // SPECIAL VEHICLE C: AUTHENTIC 3-WHEEL TUK-TUK ("Tuk Tuk") WITH 3D AVATAR
   // ==========================================================================
   if (spec.bodyStyle === 'tuk_tuk') {
     const width = 1.36;
@@ -388,7 +884,6 @@ export function createRealisticCarRig(
     shadowPlane.position.y = 0.02;
     group.add(shadowPlane);
 
-    // Lower body tub + rear engine bay + front leg shield cowl
     const floorGeo = new THREE.BoxGeometry(width, 0.16, length * 0.78);
     const floorMesh = new THREE.Mesh(floorGeo, carbonMat);
     floorMesh.position.set(0, 0.26, 0.14);
@@ -402,13 +897,11 @@ export function createRealisticCarRig(
     const frontCowl = new THREE.Mesh(frontCowlGeo, paintMat);
     frontCowl.position.set(0, 0.66, -0.68);
 
-    // Curved windshield + central wiper
     const wsGeo = new THREE.PlaneGeometry(0.96, 0.58);
     const ws = new THREE.Mesh(wsGeo, glassMat);
     ws.position.set(0, 1.26, -0.78);
     ws.rotation.x = -0.22;
 
-    // Characteristic Black Canvas Roof Canopy + Yellow Trim Band
     const canopyMat = new THREE.MeshStandardMaterial({ color: 0x171717, roughness: 0.78 });
     const roofGeo = new THREE.BoxGeometry(width + 0.04, 0.14, 2.05);
     const roof = new THREE.Mesh(roofGeo, canopyMat);
@@ -422,7 +915,6 @@ export function createRealisticCarRig(
     const rearFlap = new THREE.Mesh(rearFlapGeo, canopyMat);
     rearFlap.position.set(0, 1.28, 1.12);
 
-    // Roof pillars & passenger bench seat
     const pillarGeo = new THREE.CylinderGeometry(0.025, 0.025, 0.95, 8);
     for (const px of [-width * 0.45, width * 0.45]) {
       for (const pz of [-0.72, 0.98]) {
@@ -435,7 +927,6 @@ export function createRealisticCarRig(
     const seat = new THREE.Mesh(seatGeo, carbonMat);
     seat.position.set(0, 0.68, 0.54);
 
-    // Single central headlight + twin blinkers + rear lights + Guatemala Tuk-Tuk plate
     const roundHlGeo = new THREE.CylinderGeometry(0.13, 0.13, 0.08, 18);
     roundHlGeo.rotateX(Math.PI / 2);
     const mainHl = new THREE.Mesh(roundHlGeo, headlightMat);
@@ -477,7 +968,6 @@ export function createRealisticCarRig(
       rearPlate,
     );
 
-    // 3 Wheels: 1 Front Steered Wheel with Mudguard + 2 Rear Wheels
     const wR = 0.24;
     const tGeo = new THREE.CylinderGeometry(wR, wR, 0.16, 18);
     tGeo.rotateZ(Math.PI / 2);
@@ -508,7 +998,6 @@ export function createRealisticCarRig(
     rrW.position.set(width * 0.48, wR, 0.78);
     group.add(frontLeftPivot, frontRightPivot, rlW, rrW);
 
-    // Cockpit Handlebar + 3D Tuk-Tuk Driver + Chrome Front Guard & Roof Rack
     const cockpitWheel = new THREE.Group();
     cockpitWheel.position.set(0, 0.96, -0.58);
     const hBarGeo = new THREE.CylinderGeometry(0.018, 0.018, 0.54, 10);
@@ -516,14 +1005,15 @@ export function createRealisticCarRig(
     cockpitWheel.add(new THREE.Mesh(hBarGeo, chromeMat));
     group.add(cockpitWheel);
 
-    const tukDriverMat = new THREE.MeshStandardMaterial({ color: 0x0284c7, roughness: 0.65 });
-    const tukSkinMat = new THREE.MeshStandardMaterial({ color: 0xd69a72, roughness: 0.65 });
-    const drvTorsoGeo = new THREE.CapsuleGeometry(0.16, 0.36, 5, 10);
-    const drvTorso = new THREE.Mesh(drvTorsoGeo, tukDriverMat);
-    drvTorso.position.set(0, 1.04, -0.22);
-    const drvHeadGeo = new THREE.SphereGeometry(0.115, 12, 10);
-    const drvHead = new THREE.Mesh(drvHeadGeo, tukSkinMat);
-    drvHead.position.set(0, 1.38, -0.22);
+    const tukAvatar = createCoverArtDriverAvatar3D(
+      avatarSeed + 5,
+      '#0284c7',
+      '#facc15',
+      'cap',
+      1.04,
+      disposables,
+    );
+    tukAvatar.position.set(0, 0.78, -0.22);
 
     const guardTubeGeo = new THREE.TorusGeometry(0.38, 0.024, 8, 18, Math.PI);
     guardTubeGeo.rotateX(Math.PI / 2);
@@ -534,7 +1024,14 @@ export function createRealisticCarRig(
     const roofRack = new THREE.Mesh(rackGeo, chromeMat);
     roofRack.position.set(0, 1.75, 0.22);
 
-    group.add(drvTorso, drvHead, frontGuard, roofRack);
+    group.add(tukAvatar, frontGuard, roofRack);
+
+    attachSideAndRearValueBadges(width * 0.51, 0.66, 0.56, 0.88, 0.2, {
+      y: 1.24,
+      z: 1.17,
+      w: 0.98,
+      h: 0.22,
+    });
 
     disposables.push(
       shadowGeo,
@@ -559,10 +1056,6 @@ export function createRealisticCarRig(
       rGeo,
       fenderGeo,
       hBarGeo,
-      tukDriverMat,
-      tukSkinMat,
-      drvTorsoGeo,
-      drvHeadGeo,
       guardTubeGeo,
       rackGeo,
     );
@@ -581,7 +1074,7 @@ export function createRealisticCarRig(
   }
 
   // ==========================================================================
-  // SPECIAL VEHICLE C: HEAVY CARGO TRUCK ("Camión")
+  // SPECIAL VEHICLE D: HEAVY CARGO TRUCK ("Camión") WITH 3D AVATAR & VALUE BANNERS
   // ==========================================================================
   if (spec.bodyStyle === 'heavy_truck') {
     const width = 2.38;
@@ -598,7 +1091,6 @@ export function createRealisticCarRig(
     shadowPlane.position.y = 0.02;
     group.add(shadowPlane);
 
-    // Heavy steel ladder chassis + chrome fuel tanks
     const frameGeo = new THREE.BoxGeometry(width * 0.72, 0.28, length * 0.92);
     const frame = new THREE.Mesh(frameGeo, carbonMat);
     frame.position.set(0, 0.48, 0.1);
@@ -610,23 +1102,26 @@ export function createRealisticCarRig(
     const tankR = new THREE.Mesh(tankGeo, chromeMat);
     tankR.position.set(width * 0.44, 0.5, -0.65);
 
-    // Tractor Cab + Hood + Chrome Grille + Bullbar + Wind Deflector
     const hoodGeo = new THREE.BoxGeometry(width * 0.86, 0.95, 1.45);
     const hood = new THREE.Mesh(hoodGeo, paintMat);
     hood.position.set(0, 1.05, -2.85);
 
-    const cabGeo = new THREE.BoxGeometry(width * 0.94, 1.75, 1.65);
-    const cab = new THREE.Mesh(cabGeo, paintMat);
-    cab.position.set(0, 1.52, -1.55);
+    // Open-glass Tractor Cab so 3D Driver Avatar is clearly visible!
+    const cabLowerGeo = new THREE.BoxGeometry(width * 0.94, 0.92, 1.65);
+    const cabLower = new THREE.Mesh(cabLowerGeo, paintMat);
+    cabLower.position.set(0, 1.1, -1.55);
 
-    const cabWindshieldGeo = new THREE.PlaneGeometry(width * 0.84, 0.72);
-    const cabWs = new THREE.Mesh(cabWindshieldGeo, glassMat);
-    cabWs.position.set(0, 1.88, -2.385);
-    cabWs.rotation.y = Math.PI;
+    const cabUpperGlassGeo = new THREE.BoxGeometry(width * 0.9, 0.82, 1.56);
+    const cabUpperGlass = new THREE.Mesh(cabUpperGlassGeo, glassMat);
+    cabUpperGlass.position.set(0, 1.96, -1.55);
+
+    const cabRoofGeo = new THREE.BoxGeometry(width * 0.94, 0.1, 1.65);
+    const cabRoof = new THREE.Mesh(cabRoofGeo, paintMat);
+    cabRoof.position.set(0, 2.38, -1.55);
 
     const spoilerGeo = new THREE.BoxGeometry(width * 0.92, 0.55, 1.15);
     const spoiler = new THREE.Mesh(spoilerGeo, trimMat);
-    spoiler.position.set(0, 2.58, -1.45);
+    spoiler.position.set(0, 2.66, -1.45);
     spoiler.rotation.x = 0.25;
 
     const grilleGeo = new THREE.BoxGeometry(width * 0.68, 0.78, 0.1);
@@ -637,14 +1132,12 @@ export function createRealisticCarRig(
     const bumper = new THREE.Mesh(bumperGeo, chromeMat);
     bumper.position.set(0, 0.52, -3.62);
 
-    // Twin Vertical Chrome Exhaust Stacks
     const stackGeo = new THREE.CylinderGeometry(0.075, 0.075, 2.55, 12);
     const stackL = new THREE.Mesh(stackGeo, chromeMat);
     stackL.position.set(-width * 0.48, 1.95, -0.68);
     const stackR = new THREE.Mesh(stackGeo, chromeMat);
     stackR.position.set(width * 0.48, 1.95, -0.68);
 
-    // Tall Corrugated Cargo Box with Accent Stripe
     const boxMat = new THREE.MeshStandardMaterial({ color: 0xf8fafc, roughness: 0.42, metalness: 0.15 });
     const cargoGeo = new THREE.BoxGeometry(width, 2.48, 4.35);
     const cargo = new THREE.Mesh(cargoGeo, boxMat);
@@ -654,7 +1147,6 @@ export function createRealisticCarRig(
     const stripe = new THREE.Mesh(stripeGeo, trimMat);
     stripe.position.set(0, 1.15, 1.55);
 
-    // Headlights, Roof Amber Clearance Lights & Rear Taillights
     const hlGeo = new THREE.BoxGeometry(0.36, 0.18, 0.08);
     const hlL = new THREE.Mesh(hlGeo, headlightMat);
     hlL.position.set(-width * 0.34, 0.88, -3.59);
@@ -664,7 +1156,7 @@ export function createRealisticCarRig(
     const roofDotGeo = new THREE.BoxGeometry(0.12, 0.07, 0.08);
     for (const rx of [-0.6, -0.3, 0, 0.3, 0.6]) {
       const rl = new THREE.Mesh(roofDotGeo, amberBlinkerMat);
-      rl.position.set(rx, 2.42, -2.38);
+      rl.position.set(rx, 2.45, -2.38);
       group.add(rl);
     }
 
@@ -674,14 +1166,25 @@ export function createRealisticCarRig(
     const tlR = new THREE.Mesh(tlGeo, brakeLightMat);
     tlR.position.set(width * 0.36, 0.62, 3.73);
 
+    const truckAvatar = createCoverArtDriverAvatar3D(
+      avatarSeed + 9,
+      '#eab308',
+      '#1d4ed8',
+      'cap',
+      1.1,
+      disposables,
+    );
+    truckAvatar.position.set(-width * 0.22, 1.44, -1.62);
+
     group.add(
       shadowPlane,
       frame,
       tankL,
       tankR,
       hood,
-      cab,
-      cabWs,
+      cabLower,
+      cabUpperGlass,
+      cabRoof,
       spoiler,
       grille,
       bumper,
@@ -693,9 +1196,16 @@ export function createRealisticCarRig(
       hlR,
       tlL,
       tlR,
+      truckAvatar,
     );
 
-    // 6 Heavy Truck Wheels (Steered Front + Tandem Dual Rear Axles)
+    attachSideAndRearValueBadges(width * 0.51, 2.02, 1.55, 2.95, 0.64, {
+      y: 2.02,
+      z: 3.74,
+      w: 1.95,
+      h: 0.45,
+    });
+
     const wR = 0.48;
     const tGeo = new THREE.CylinderGeometry(wR, wR, 0.34, 22);
     tGeo.rotateZ(Math.PI / 2);
@@ -739,9 +1249,8 @@ export function createRealisticCarRig(
 
     group.add(frontLeftPivot, frontRightPivot, rl1, rr1, rl2, rr2);
 
-    // Truck Cockpit Steering Wheel + Chrome Side Mirrors & Mudflaps
     const cockpitWheel = new THREE.Group();
-    cockpitWheel.position.set(-width * 0.22, 1.58, -1.92);
+    cockpitWheel.position.set(-width * 0.22, 1.68, -1.94);
     cockpitWheel.rotation.x = -0.55;
     const swGeo = new THREE.TorusGeometry(0.22, 0.026, 10, 24);
     cockpitWheel.add(new THREE.Mesh(swGeo, carbonMat));
@@ -763,8 +1272,9 @@ export function createRealisticCarRig(
       frameGeo,
       tankGeo,
       hoodGeo,
-      cabGeo,
-      cabWindshieldGeo,
+      cabLowerGeo,
+      cabUpperGlassGeo,
+      cabRoofGeo,
       spoilerGeo,
       grilleGeo,
       bumperGeo,
@@ -782,7 +1292,7 @@ export function createRealisticCarRig(
       mudflapGeo,
     );
 
-    attachDriverTag(3.55);
+    attachDriverTag(3.62);
 
     return {
       group,
@@ -796,7 +1306,7 @@ export function createRealisticCarRig(
   }
 
   // ==========================================================================
-  // SPECIAL VEHICLE D: 4X4 DOUBLE-CAB PICKUP TRUCK ("Pickup 4x4")
+  // SPECIAL VEHICLE E: 4X4 DOUBLE-CAB PICKUP TRUCK ("Pickup 4x4") WITH 3D AVATAR
   // ==========================================================================
   if (spec.bodyStyle === 'pickup_truck') {
     const width = 2.02;
@@ -813,7 +1323,6 @@ export function createRealisticCarRig(
     shadowPlane.position.y = 0.02;
     group.add(shadowPlane);
 
-    // Lifted 4x4 Chassis + Side Running Boards (Estribos)
     const chassisGeo = new THREE.BoxGeometry(width * 0.84, 0.24, length * 0.92);
     const chassis = new THREE.Mesh(chassisGeo, carbonMat);
     chassis.position.set(0, 0.42, 0);
@@ -822,12 +1331,10 @@ export function createRealisticCarRig(
     const steps = new THREE.Mesh(stepGeo, carbonMat);
     steps.position.set(0, 0.36, -0.32);
 
-    // Front Engine Bay / Hood + Double Cab Lower Body
     const frontCabLowerGeo = new THREE.BoxGeometry(width, 0.68, 3.05);
     const frontCabLower = new THREE.Mesh(frontCabLowerGeo, paintMat);
     frontCabLower.position.set(0, 0.82, -1.02);
 
-    // Double Cab Greenhouse (Tinted Windows + Roof)
     const cabUpperGeo = new THREE.BoxGeometry(width * 0.88, 0.64, 1.72);
     const cabUpper = new THREE.Mesh(cabUpperGeo, glassMat);
     cabUpper.position.set(0, 1.44, -0.45);
@@ -836,7 +1343,17 @@ export function createRealisticCarRig(
     const roofCap = new THREE.Mesh(roofCapGeo, paintMat);
     roofCap.position.set(0, 1.78, -0.45);
 
-    // Open Cargo Bed ("Palangana") — Floor Liner + Left/Right Walls + Rear Tailgate
+    // 3D Avatar Driver clearly visible inside the Pickup cabin!
+    const pickupAvatar = createCoverArtDriverAvatar3D(
+      avatarSeed + 11,
+      '#f97316',
+      '#ffffff',
+      'cap',
+      0.96,
+      disposables,
+    );
+    pickupAvatar.position.set(-width * 0.21, 1.06, -0.58);
+
     const bedFloorGeo = new THREE.BoxGeometry(width * 0.92, 0.14, 1.98);
     const bedFloor = new THREE.Mesh(bedFloorGeo, carbonMat);
     bedFloor.position.set(0, 0.56, 1.54);
@@ -851,7 +1368,6 @@ export function createRealisticCarRig(
     const tailgate = new THREE.Mesh(tailgateGeo, paintMat);
     tailgate.position.set(0, 0.84, 2.52);
 
-    // Sports Rollbar ("Barra Antivuelco") + 3 Off-Road Roof Spotlights
     const rollArchGeo = new THREE.TorusGeometry(width * 0.4, 0.045, 10, 20, Math.PI);
     const rollArch = new THREE.Mesh(rollArchGeo, carbonMat);
     rollArch.position.set(0, 1.16, 0.62);
@@ -871,7 +1387,6 @@ export function createRealisticCarRig(
       group.add(spot);
     }
 
-    // Rugged 4x4 Front Grille, Bullbar, Headlights & Taillights
     const grilleGeo = new THREE.BoxGeometry(width * 0.66, 0.38, 0.1);
     const grille = new THREE.Mesh(grilleGeo, carbonMat);
     grille.position.set(0, 0.86, -2.56);
@@ -896,7 +1411,6 @@ export function createRealisticCarRig(
     const tlR = new THREE.Mesh(tlGeo, brakeLightMat);
     tlR.position.set(width * 0.45, 0.88, 2.57);
 
-    // 4 Rugged Off-Road 4x4 Wheels
     const wR = 0.42;
     const tGeo = new THREE.CylinderGeometry(wR, wR, 0.29, 20);
     tGeo.rotateZ(Math.PI / 2);
@@ -925,7 +1439,6 @@ export function createRealisticCarRig(
     const rrW = buildPickupWheel();
     rrW.position.set(width * 0.47, wR, 1.56);
 
-    // Cockpit Steering Wheel
     const cockpitWheel = new THREE.Group();
     cockpitWheel.position.set(-width * 0.21, 1.24, -0.92);
     cockpitWheel.rotation.x = -0.35;
@@ -938,6 +1451,7 @@ export function createRealisticCarRig(
       frontCabLower,
       cabUpper,
       roofCap,
+      pickupAvatar,
       bedFloor,
       bedWallL,
       bedWallR,
@@ -958,6 +1472,13 @@ export function createRealisticCarRig(
       rrW,
       cockpitWheel,
     );
+
+    attachSideAndRearValueBadges(width * 0.54, 0.86, 1.52, 1.48, 0.32, {
+      y: 0.86,
+      z: 2.59,
+      w: 1.28,
+      h: 0.28,
+    });
 
     disposables.push(
       shadowGeo,
@@ -983,7 +1504,7 @@ export function createRealisticCarRig(
       swGeo,
     );
 
-    attachDriverTag(2.35);
+    attachDriverTag(2.42);
 
     return {
       group,
@@ -997,7 +1518,7 @@ export function createRealisticCarRig(
   }
 
   // ==========================================================================
-  // HIGH-DETAIL REALISTIC AUTOMOBILES (BYD F, COROLLA, SUPRA, GT86, LAMBO, TESLA, GTR, SENTRA)
+  // HIGH-DETAIL REALISTIC AUTOMOBILES WITH 3D AVATARS & VALUE DECALS
   // ==========================================================================
   let width = 1.92;
   let length = 4.48;
@@ -1017,35 +1538,34 @@ export function createRealisticCarRig(
     width = 2.08;
     length = 4.56;
     chassisH = 0.42;
-    cabinH = 0.38;
+    cabinH = 0.42;
     cabinLen = 1.85;
     cabinOffsetZ = -0.05;
   } else if (spec.bodyStyle === 'sport_coupe' || spec.bodyStyle === 'gt_boxer') {
     width = 1.94;
     length = 4.44;
     chassisH = 0.48;
-    cabinH = 0.45;
+    cabinH = 0.48;
     cabinLen = 1.84;
     cabinOffsetZ = 0.24;
   } else if (spec.bodyStyle === 'gtr_race') {
     width = 1.92;
     length = 4.56;
     chassisH = 0.52;
-    cabinH = 0.48;
+    cabinH = 0.5;
     cabinLen = 1.98;
     cabinOffsetZ = 0.12;
   } else if (spec.bodyStyle === 'ev_fastback') {
     width = 1.98;
     length = 4.82;
     chassisH = 0.5;
-    cabinH = 0.49;
+    cabinH = 0.51;
     cabinLen = 2.58;
     cabinOffsetZ = 0.08;
   }
 
   const halfL = length / 2;
 
-  // 1. Contact shadow grounded just above road
   const shadowGeo = new THREE.PlaneGeometry(width * 1.46, length * 1.32);
   const shadowMat = new THREE.MeshBasicMaterial({
     map: contactShadowTex,
@@ -1059,7 +1579,6 @@ export function createRealisticCarRig(
   group.add(shadowPlane);
   disposables.push(shadowGeo, shadowMat);
 
-  // 2. Sculpted profile lower hull via ExtrudeGeometry with smooth bevels
   const sideShape = new THREE.Shape();
   if (spec.bodyStyle === 'supercar_wedge') {
     sideShape.moveTo(-halfL, 0.2);
@@ -1095,14 +1614,12 @@ export function createRealisticCarRig(
   group.add(hullMesh);
   disposables.push(hullGeo);
 
-  // 3. Lower aerodynamic front lip, side skirts & rear diffuser
   const skirtGeo = new THREE.BoxGeometry(width + 0.04, 0.1, length + 0.08);
   const skirtMesh = new THREE.Mesh(skirtGeo, carbonMat);
   skirtMesh.position.set(0, 0.22, 0);
   group.add(skirtMesh);
   disposables.push(skirtGeo);
 
-  // Sculpted Wheel Arch Flares
   const flareGeo = new THREE.TorusGeometry(0.37, 0.045, 8, 16, Math.PI);
   flareGeo.rotateY(Math.PI / 2);
   const frontZ = -length * 0.31;
@@ -1116,7 +1633,6 @@ export function createRealisticCarRig(
   }
   disposables.push(flareGeo);
 
-  // 4. Sculpted Aerodynamic Sloped Cabin Greenhouse + Roof Cap + Interior Seats/Driver + Mirrors + Door Handles
   const roofMat =
     spec.bodyStyle === 'sport_sedan' || spec.bodyStyle === 'ev_fastback' ? carbonMat : paintMat;
 
@@ -1140,6 +1656,7 @@ export function createRealisticCarRig(
   cabinGlassGeo.rotateY(-Math.PI / 2);
   cabinGlassGeo.translate((width * 0.78) / 2, 0, cabinOffsetZ);
   const cabinGlass = new THREE.Mesh(cabinGlassGeo, glassMat);
+  cabinGlass.renderOrder = 2;
   group.add(cabinGlass);
 
   const roofCapGeo = new THREE.BoxGeometry(width * 0.75, 0.055, cabinLen * 0.52);
@@ -1147,20 +1664,28 @@ export function createRealisticCarRig(
   roofCap.position.set(0, baseCabY + cabinH + 0.02, cabinOffsetZ + cabinLen * 0.03);
   group.add(roofCap);
 
-  // Interior Bucket Seats & Driver Silhouette visible through glass
+  // Sport Bucket Seats + Full Cover-Art 3D Avatar Driver visibly steering inside the car!
   const seatBackGeo = new THREE.BoxGeometry(0.36, 0.44, 0.1);
-  const drvHeadGeo = new THREE.SphereGeometry(0.105, 10, 10);
   const seatL = new THREE.Mesh(seatBackGeo, carbonMat);
-  seatL.position.set(-width * 0.19, baseCabY + 0.18, cabinOffsetZ + 0.16);
+  seatL.position.set(-width * 0.19, baseCabY + 0.14, cabinOffsetZ + 0.22);
   seatL.rotation.x = 0.18;
   const seatR = new THREE.Mesh(seatBackGeo, carbonMat);
-  seatR.position.set(width * 0.19, baseCabY + 0.18, cabinOffsetZ + 0.16);
+  seatR.position.set(width * 0.19, baseCabY + 0.14, cabinOffsetZ + 0.22);
   seatR.rotation.x = 0.18;
-  const drvHead = new THREE.Mesh(drvHeadGeo, carbonMat);
-  drvHead.position.set(-width * 0.19, baseCabY + 0.34, cabinOffsetZ + 0.12);
-  group.add(seatL, seatR, drvHead);
 
-  // Left & Right Side Mirrors + Door Handles + Windshield Wipers
+  const isRaceHelmet =
+    spec.bodyStyle === 'gtr_race' || spec.bodyStyle === 'supercar_wedge' ? 'helmet' : 'cap';
+  const carAvatar = createCoverArtDriverAvatar3D(
+    avatarSeed + 17,
+    spec.accentHex || '#f59e0b',
+    paintHex || spec.defaultPaint,
+    isRaceHelmet,
+    spec.bodyStyle === 'supercar_wedge' ? 0.68 : 0.76,
+    disposables,
+  );
+  carAvatar.position.set(-width * 0.19, baseCabY - 0.1, cabinOffsetZ + 0.08);
+  group.add(seatL, seatR, carAvatar);
+
   const mirrorCapGeo = new THREE.BoxGeometry(0.17, 0.095, 0.13);
   const mirrorStalkGeo = new THREE.BoxGeometry(0.08, 0.038, 0.05);
   const handleGeo = new THREE.BoxGeometry(0.035, 0.04, 0.18);
@@ -1186,17 +1711,16 @@ export function createRealisticCarRig(
     cabinGlassGeo,
     roofCapGeo,
     seatBackGeo,
-    drvHeadGeo,
     mirrorCapGeo,
     mirrorStalkGeo,
     handleGeo,
     wiperGeo,
   );
 
-  // 5. Nissan Calsonic #12 Door Number Decals
+  // Door Number Decal (#12 GTR) + Value Message Badges on Sides & Rear!
   if (spec.liveryNumber) {
     const doorTex = createNumberDoorTexture(spec.liveryNumber, paintHex || spec.defaultPaint);
-    const decalGeo = new THREE.PlaneGeometry(1.15, 0.48);
+    const decalGeo = new THREE.PlaneGeometry(0.95, 0.42);
     const decalMat = new THREE.MeshStandardMaterial({
       map: doorTex,
       roughness: 0.25,
@@ -1204,16 +1728,23 @@ export function createRealisticCarRig(
       polygonOffsetFactor: -1,
     });
     const leftDoor = new THREE.Mesh(decalGeo, decalMat);
-    leftDoor.position.set(-width / 2 - 0.015, 0.56, 0.05);
+    leftDoor.position.set(-width / 2 - 0.015, 0.56, -0.32);
     leftDoor.rotation.y = -Math.PI / 2;
     const rightDoor = new THREE.Mesh(decalGeo, decalMat);
-    rightDoor.position.set(width / 2 + 0.015, 0.56, 0.05);
+    rightDoor.position.set(width / 2 + 0.015, 0.56, -0.32);
     rightDoor.rotation.y = Math.PI / 2;
     group.add(leftDoor, rightDoor);
     disposables.push(doorTex, decalGeo, decalMat);
   }
 
-  // 6. Detailed Front Grille, Lower Splitter Intake, LED DRL Strips, Headlights & License Plates
+  attachSideAndRearValueBadges(
+    width / 2 + 0.016,
+    0.52,
+    spec.liveryNumber ? 0.56 : 0.06,
+    1.18,
+    0.26,
+  );
+
   const grilleGeo = new THREE.BoxGeometry(width * 0.56, 0.21, 0.08);
   const grille = new THREE.Mesh(grilleGeo, spec.bodyStyle === 'ev_fastback' ? paintMat : carbonMat);
   grille.position.set(0, 0.41, -halfL - 0.02);
@@ -1251,7 +1782,6 @@ export function createRealisticCarRig(
   group.add(frontPlate, rearPlate);
   disposables.push(hlGeo, drlStripGeo, plateTex, plateGeo, plateMat);
 
-  // 7. Rear Taillights, Twin Exhaust Pipes & Model-Specific Spoiler
   if (spec.bodyStyle === 'gtr_race') {
     const roundTlGeo = new THREE.CylinderGeometry(0.085, 0.085, 0.06, 16);
     roundTlGeo.rotateX(Math.PI / 2);
@@ -1304,7 +1834,6 @@ export function createRealisticCarRig(
     disposables.push(wingBladeGeo, wingPillarGeo);
   }
 
-  // 8. 4 Multi-Spoke Alloy Wheels with Brake Rotors & Red Brake Calipers
   const wheelRadius = 0.34;
   const wheelWidth = 0.27;
   const tireGeo = new THREE.CylinderGeometry(wheelRadius, wheelRadius, wheelWidth, 22);
@@ -1356,7 +1885,6 @@ export function createRealisticCarRig(
 
   group.add(frontLeftPivot, frontRightPivot, rlWheel, rrWheel);
 
-  // 9. Interior Simulator Cockpit Dashboard + Rotating 3D Steering Wheel
   const dashGroup = new THREE.Group();
   dashGroup.position.set(0, 0.28 + chassisH + 0.12, cabinOffsetZ - cabinLen * 0.26);
   const dashBoardGeo = new THREE.BoxGeometry(width * 0.74, 0.18, 0.38);
@@ -1380,7 +1908,7 @@ export function createRealisticCarRig(
   group.add(dashGroup);
   disposables.push(rimTorusGeo, spokeGeo, centerMarkerGeo, markerMat);
 
-  attachDriverTag(2.28);
+  attachDriverTag(2.36);
 
   return {
     group,
@@ -1526,8 +2054,69 @@ export function createWalkingPedestrian3D(
   };
 }
 
+function createSubtleKidShirtTexture(
+  shirtHex: string,
+  includeSubtleLabel: boolean,
+): THREE.CanvasTexture {
+  const c = document.createElement('canvas');
+  c.width = 192;
+  c.height = 192;
+  const ctx = c.getContext('2d')!;
+  ctx.fillStyle = shirtHex;
+  ctx.fillRect(0, 0, 192, 192);
+
+  // Sporty collar trim
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(58, 0, 76, 14);
+
+  if (includeSubtleLabel) {
+    // Very subtle, small polo chest print so it looks like a discreet guest team jersey
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.92)';
+    ctx.font = 'bold 17px Plus Jakarta Sans, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('San Lolek', 96, 74);
+  }
+
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.needsUpdate = true;
+  return tex;
+}
+
+function createSubtleHandheldPlacardTexture(): THREE.CanvasTexture {
+  const c = document.createElement('canvas');
+  c.width = 256;
+  c.height = 112;
+  const ctx = c.getContext('2d')!;
+
+  ctx.fillStyle = '#f8fafc';
+  ctx.beginPath();
+  ctx.roundRect(6, 6, 244, 100, 14);
+  ctx.fill();
+
+  ctx.strokeStyle = '#38bdf8';
+  ctx.lineWidth = 5;
+  ctx.stroke();
+
+  ctx.fillStyle = '#0369a1';
+  ctx.font = 'bold 24px Outfit, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('¡Vamos Campeón!', 128, 48);
+
+  ctx.fillStyle = '#0284c7';
+  ctx.font = '600 18px Plus Jakarta Sans, sans-serif';
+  ctx.fillText('Apoyo · San Lolek', 128, 80);
+
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.needsUpdate = true;
+  return tex;
+}
+
 // ============================================================================
-// 3D CHECKPOINT FINISH META STAGE + ANONYMOUS SPORTING PODIUM + GRAND CHAMPION TROPHY
+// 3D CHECKPOINT FINISH META STAGE + VIRTUAL PODIUM:
+// - TWO EDUCATOR SISTERS (WHITE & BLUE HABIT, SUN VISORS, SUNGLASSES ON ONE)
+// - CHEERING KIDS WITH SUBTLE SHIRT PRINT / SMALL HANDHELD CHEERING SIGN
 // ============================================================================
 export function createCheckpointMetaStage3D(
   grandTrophyTex: THREE.Texture,
@@ -1570,6 +2159,7 @@ export function createCheckpointMetaStage3D(
     clearcoat: 1.0,
     ior: 2.4,
   });
+  const skyArchMat = new THREE.MeshStandardMaterial({ color: 0x0284c7, roughness: 0.45 });
   const velvetRedMat = new THREE.MeshStandardMaterial({ color: 0xb91c1c, roughness: 0.62 });
 
   const archLeft = new THREE.Mesh(pillarGeo, goldMat);
@@ -1578,31 +2168,31 @@ export function createCheckpointMetaStage3D(
   archRight.position.set(6.8, 3.4, 0);
 
   const crossBeamGeo = new THREE.BoxGeometry(14.4, 0.55, 0.55);
-  const crossBeam = new THREE.Mesh(crossBeamGeo, velvetRedMat);
+  const crossBeam = new THREE.Mesh(crossBeamGeo, skyArchMat);
   crossBeam.position.set(0, 6.7, 0);
 
   group.add(groundRing, archLeft, archRight, crossBeam);
 
-  // Side Ceremony Podium Stage at x = +5.4m
+  // Side Ceremony Podium Stage at x = +5.55m (safely off the asphalt lane)
   const podiumGroup = new THREE.Group();
-  podiumGroup.position.set(5.4, 0, 0);
+  podiumGroup.position.set(5.55, 0, 0);
 
-  const carpetGeo = new THREE.BoxGeometry(3.2, 0.24, 2.8);
-  const carpet = new THREE.Mesh(carpetGeo, velvetRedMat);
+  const carpetGeo = new THREE.BoxGeometry(3.5, 0.24, 3.0);
+  const carpet = new THREE.Mesh(carpetGeo, skyArchMat);
   carpet.position.y = 0.12;
   podiumGroup.add(carpet);
 
-  // Anonymous 3D Sporting Steward Figure (shown on metas 1..N-1 — zero personal names/photos)
+  // Anonymous 3D Sporting Steward Figure (shown on intermediate metas 1..N-1)
   const childGroup = new THREE.Group();
-  childGroup.position.set(-0.55, 0.24, 0);
-  const skinMat = new THREE.MeshStandardMaterial({ color: 0xd69a72, roughness: 0.6 });
+  childGroup.position.set(-0.62, 0.24, 0);
+  const stewardSkinMat = new THREE.MeshStandardMaterial({ color: 0xe6b89c, roughness: 0.6 });
   const childBodyGeo = new THREE.CylinderGeometry(0.24, 0.28, 1.22, 10);
   const childBodyMat = new THREE.MeshStandardMaterial({ color: 0x0284c7, roughness: 0.6 });
   const childBody = new THREE.Mesh(childBodyGeo, childBodyMat);
   childBody.position.set(0, 0.61, 0);
 
   const stewardHeadGeo = new THREE.SphereGeometry(0.18, 12, 10);
-  const stewardHead = new THREE.Mesh(stewardHeadGeo, skinMat);
+  const stewardHead = new THREE.Mesh(stewardHeadGeo, stewardSkinMat);
   stewardHead.position.set(0, 1.42, 0);
 
   const capVisorGeo = new THREE.CylinderGeometry(0.22, 0.22, 0.08, 12);
@@ -1613,44 +2203,266 @@ export function createCheckpointMetaStage3D(
   wavingArmPivot.position.set(0.32, 1.12, 0);
   const waveArmGeo = new THREE.CapsuleGeometry(0.055, 0.42, 5, 8);
   waveArmGeo.translate(0, 0.22, 0);
-  wavingArmPivot.add(new THREE.Mesh(waveArmGeo, skinMat));
+  wavingArmPivot.add(new THREE.Mesh(waveArmGeo, stewardSkinMat));
   childGroup.add(childBody, stewardHead, capVisor, wavingArmPivot);
   podiumGroup.add(childGroup);
 
-  // Championship Finale Stewards Group (shown on Final Meta — purely sporting!)
+  // =========================================================================
+  // GRAND FINALE PRESENTERS: TWO FAIR-SKINNED SPANISH CAUCASIAN EDUCATOR SISTERS
+  // - White habit with sky/royal-blue scapular & veil ("hábito blanco con azul")
+  // - BOTH wearing sporty sun visors ("visera para el sol")
+  // - ONE Sister (left) wearing stylish sunglasses ("lentes de sol")
+  // =========================================================================
   const madresGroup = new THREE.Group();
-  madresGroup.position.set(-0.55, 0.24, 0);
-  const habitWhiteMat = new THREE.MeshStandardMaterial({ color: 0xf8fafc, roughness: 0.5 });
-  const veilBlueMat = new THREE.MeshStandardMaterial({ color: 0x0284c7, roughness: 0.48 });
+  madresGroup.position.set(-0.62, 0.24, 0);
 
-  const sisterRobeGeo = new THREE.CylinderGeometry(0.24, 0.28, 1.42, 12);
-  const sisterVeilGeo = new THREE.SphereGeometry(0.16, 12, 10);
-  for (const sx of [-0.42, 0.42]) {
-    const blazer = new THREE.Mesh(sisterRobeGeo, veilBlueMat);
-    blazer.position.set(sx, 0.72, 0.14);
-    const head = new THREE.Mesh(sisterVeilGeo, skinMat);
-    head.position.set(sx, 1.56, 0.14);
-    madresGroup.add(blazer, head);
+  const caucasianSkinMat = new THREE.MeshStandardMaterial({
+    color: 0xf9dfd0, // Fair Spanish Caucasian tone
+    roughness: 0.56,
+  });
+  const habitWhiteMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.46 });
+  const veilBlueMat = new THREE.MeshStandardMaterial({ color: 0x0284c7, roughness: 0.44 });
+  const veilLightBlueMat = new THREE.MeshStandardMaterial({ color: 0x38bdf8, roughness: 0.42 });
+  const beltBrownMat = new THREE.MeshStandardMaterial({ color: 0x5c3a21, roughness: 0.7 });
+  const sunglassesDarkMat = new THREE.MeshPhysicalMaterial({
+    color: 0x0f172a,
+    metalness: 0.72,
+    roughness: 0.14,
+    clearcoat: 1.0,
+  });
+
+  const sisterTunicGeo = new THREE.CylinderGeometry(0.22, 0.33, 1.38, 14);
+  const sisterScapularGeo = new THREE.BoxGeometry(0.26, 1.24, 0.045);
+  const sisterBeltGeo = new THREE.CylinderGeometry(0.245, 0.245, 0.055, 14);
+  const sisterWimpleGeo = new THREE.CylinderGeometry(0.21, 0.27, 0.22, 12);
+  const sisterHeadGeo = new THREE.SphereGeometry(0.175, 14, 12);
+  const sisterCoifBandGeo = new THREE.CylinderGeometry(0.182, 0.182, 0.08, 14);
+  const sisterVeilTopGeo = new THREE.SphereGeometry(
+    0.195,
+    14,
+    10,
+    0,
+    Math.PI * 2,
+    0,
+    Math.PI * 0.62,
+  );
+  const sisterVeilBackGeo = new THREE.BoxGeometry(0.42, 0.78, 0.12);
+  const sunVisorBrimGeo = new THREE.CylinderGeometry(
+    0.24,
+    0.26,
+    0.032,
+    16,
+    1,
+    false,
+    -Math.PI * 0.45,
+    Math.PI * 0.9,
+  );
+  const sunGlassLensGeo = new THREE.BoxGeometry(0.082, 0.056, 0.025);
+  const sunGlassBridgeGeo = new THREE.BoxGeometry(0.04, 0.016, 0.022);
+  const sisterArmGeo = new THREE.CapsuleGeometry(0.052, 0.38, 5, 8);
+  sisterArmGeo.translate(0, 0.18, 0);
+
+  const sisterWaveArms: THREE.Group[] = [];
+
+  for (const [idx, sx] of ([-0.46, 0.46] as const).entries()) {
+    const nun = new THREE.Group();
+    nun.position.set(sx, 0, 0.2);
+    // Face toward the oncoming driver (-Z)
+    nun.rotation.y = Math.PI;
+
+    // 1. White Habit Tunic + Blue Scapular Apron (Front & Back) + Belt
+    const tunic = new THREE.Mesh(sisterTunicGeo, habitWhiteMat);
+    tunic.position.set(0, 0.69, 0);
+
+    const scapFront = new THREE.Mesh(sisterScapularGeo, veilBlueMat);
+    scapFront.position.set(0, 0.68, 0.22);
+    const scapBack = new THREE.Mesh(sisterScapularGeo, veilBlueMat);
+    scapBack.position.set(0, 0.68, -0.22);
+
+    const belt = new THREE.Mesh(sisterBeltGeo, beltBrownMat);
+    belt.position.set(0, 0.88, 0);
+
+    const wimple = new THREE.Mesh(sisterWimpleGeo, habitWhiteMat);
+    wimple.position.set(0, 1.33, 0);
+
+    // 2. Fair Spanish Caucasian Face + White Coif + Blue Veil
+    const head = new THREE.Mesh(sisterHeadGeo, caucasianSkinMat);
+    head.position.set(0, 1.54, 0);
+
+    const coifBand = new THREE.Mesh(sisterCoifBandGeo, habitWhiteMat);
+    coifBand.position.set(0, 1.62, 0.015);
+
+    const veilCap = new THREE.Mesh(sisterVeilTopGeo, veilLightBlueMat);
+    veilCap.position.set(0, 1.56, -0.01);
+
+    const veilBack = new THREE.Mesh(sisterVeilBackGeo, veilBlueMat);
+    veilBack.position.set(0, 1.24, -0.15);
+
+    // 3. Sporty Sun Visor ("visera para el sol") worn by BOTH Sisters!
+    const visorCrown = new THREE.Mesh(sunVisorBrimGeo, habitWhiteMat);
+    visorCrown.position.set(0, 1.63, 0.09);
+    visorCrown.rotation.x = 0.22;
+
+    const visorBlueTrim = new THREE.Mesh(sunVisorBrimGeo, veilBlueMat);
+    visorBlueTrim.scale.set(1.03, 0.65, 1.03);
+    visorBlueTrim.position.set(0, 1.645, 0.085);
+    visorBlueTrim.rotation.x = 0.22;
+
+    nun.add(
+      tunic,
+      scapFront,
+      scapBack,
+      belt,
+      wimple,
+      head,
+      coifBand,
+      veilCap,
+      veilBack,
+      visorCrown,
+      visorBlueTrim,
+    );
+
+    // 4. Stylish Sunglasses ("lentes de sol") on Sister #1 (idx === 0)
+    if (idx === 0) {
+      const glassesGroup = new THREE.Group();
+      glassesGroup.position.set(0, 1.555, 0.168);
+      const lensL = new THREE.Mesh(sunGlassLensGeo, sunglassesDarkMat);
+      lensL.position.set(-0.056, 0, 0);
+      const lensR = new THREE.Mesh(sunGlassLensGeo, sunglassesDarkMat);
+      lensR.position.set(0.056, 0, 0);
+      const bridge = new THREE.Mesh(sunGlassBridgeGeo, goldMat);
+      bridge.position.set(0, 0.01, 0.005);
+      glassesGroup.add(lensL, lensR, bridge);
+      nun.add(glassesGroup);
+    }
+
+    // 5. White-Sleeved Celebrating Arm
+    const armPivot = new THREE.Group();
+    armPivot.position.set(idx === 0 ? -0.27 : 0.27, 1.2, 0.06);
+    const sleeveMesh = new THREE.Mesh(sisterArmGeo, habitWhiteMat);
+    armPivot.add(sleeveMesh);
+    nun.add(armPivot);
+    sisterWaveArms.push(armPivot);
+
+    madresGroup.add(nun);
   }
-  const madresPhotoGeo = new THREE.PlaneGeometry(1.55, 1.55);
+
+  // Framed 16:9 Podium Backdrop Board behind the Sisters & Trophy
+  const madresPhotoGeo = new THREE.PlaneGeometry(1.96, 1.12);
   const madresPhotoMat = new THREE.MeshStandardMaterial({
     map: grandTrophyTex,
-    roughness: 0.38,
+    roughness: 0.36,
     side: THREE.DoubleSide,
   });
   const madresPhotoMesh = new THREE.Mesh(madresPhotoGeo, madresPhotoMat);
-  madresPhotoMesh.position.set(0, 0.96, -0.02);
+  madresPhotoMesh.position.set(0.32, 1.28, -0.58);
   madresGroup.add(madresPhotoMesh);
   podiumGroup.add(madresGroup);
+
+  // =========================================================================
+  // CHEERING KIDS SUPPORTING ON THE SIDELINES (SUBTLE SAN LOLEK SHIRT / SIGN)
+  // Safely off the street on the left grass edge (x = -5.45m) & right edge
+  // =========================================================================
+  const cheeringKidsGroup = new THREE.Group();
+  const kidWaveArms: THREE.Group[] = [];
+  const kidBodyGeo = new THREE.BoxGeometry(0.34, 0.52, 0.2);
+  const kidLegGeo = new THREE.CapsuleGeometry(0.058, 0.32, 4, 8);
+  const kidHeadGeo = new THREE.SphereGeometry(0.145, 12, 10);
+  const kidHairGeo = new THREE.SphereGeometry(0.155, 12, 8, 0, Math.PI * 2, 0, Math.PI * 0.58);
+  const kidArmGeo = new THREE.CapsuleGeometry(0.044, 0.28, 4, 8);
+  kidArmGeo.translate(0, 0.14, 0);
+
+  const subtleBlueShirtTex = createSubtleKidShirtTexture('#0284c7', true);
+  const subtleTealShirtTex = createSubtleKidShirtTexture('#0d9488', false);
+  const subtlePinkShirtTex = createSubtleKidShirtTexture('#ec4899', false);
+  const subtleSignTex = createSubtleHandheldPlacardTexture();
+
+  const kidBlueShirtMat = new THREE.MeshStandardMaterial({
+    map: subtleBlueShirtTex,
+    roughness: 0.65,
+  });
+  const kidTealShirtMat = new THREE.MeshStandardMaterial({
+    map: subtleTealShirtTex,
+    roughness: 0.65,
+  });
+  const kidPinkShirtMat = new THREE.MeshStandardMaterial({
+    map: subtlePinkShirtTex,
+    roughness: 0.65,
+  });
+  const kidShortsMat = new THREE.MeshStandardMaterial({ color: 0x1e3a8a, roughness: 0.75 });
+  const kidHairMat = new THREE.MeshStandardMaterial({ color: 0x451a03, roughness: 0.8 });
+  const kidSkinTones = [
+    new THREE.MeshStandardMaterial({ color: 0xf1c29d, roughness: 0.6 }),
+    new THREE.MeshStandardMaterial({ color: 0xd99b72, roughness: 0.6 }),
+    new THREE.MeshStandardMaterial({ color: 0xe8b48f, roughness: 0.6 }),
+  ];
+
+  const signGeo = new THREE.PlaneGeometry(0.58, 0.26);
+  const signStickGeo = new THREE.CylinderGeometry(0.015, 0.015, 0.42, 6);
+  const signMat = new THREE.MeshStandardMaterial({
+    map: subtleSignTex,
+    roughness: 0.45,
+    side: THREE.DoubleSide,
+  });
+
+  const kidPlacements: Array<{
+    x: number;
+    z: number;
+    shirtMat: THREE.MeshStandardMaterial;
+    holdsSubtleSign: boolean;
+  }> = [
+    { x: -5.35, z: -0.55, shirtMat: kidBlueShirtMat, holdsSubtleSign: false },
+    { x: -5.85, z: 0.45, shirtMat: kidTealShirtMat, holdsSubtleSign: true },
+    { x: 7.45, z: 0.35, shirtMat: kidPinkShirtMat, holdsSubtleSign: false },
+  ];
+
+  kidPlacements.forEach((kp, kIdx) => {
+    const kid = new THREE.Group();
+    kid.position.set(kp.x, 0, kp.z);
+    kid.rotation.y = Math.PI; // Face oncoming car
+
+    const legL = new THREE.Mesh(kidLegGeo, kidShortsMat);
+    legL.position.set(-0.08, 0.22, 0);
+    const legR = new THREE.Mesh(kidLegGeo, kidShortsMat);
+    legR.position.set(0.08, 0.22, 0);
+
+    const torso = new THREE.Mesh(kidBodyGeo, kp.shirtMat);
+    torso.position.set(0, 0.64, 0);
+
+    const kSkin = kidSkinTones[kIdx % kidSkinTones.length];
+    const head = new THREE.Mesh(kidHeadGeo, kSkin);
+    head.position.set(0, 1.06, 0);
+
+    const hair = new THREE.Mesh(kidHairGeo, kidHairMat);
+    hair.position.set(0, 1.08, -0.01);
+
+    const kArmPivot = new THREE.Group();
+    kArmPivot.position.set(0.22, 0.84, 0);
+    kArmPivot.add(new THREE.Mesh(kidArmGeo, kSkin));
+
+    if (kp.holdsSubtleSign) {
+      const stick = new THREE.Mesh(signStickGeo, beltBrownMat);
+      stick.position.set(0, 0.34, 0);
+      const placard = new THREE.Mesh(signGeo, signMat);
+      placard.position.set(0, 0.56, 0.02);
+      kArmPivot.add(stick, placard);
+    }
+
+    kid.add(legL, legR, torso, head, hair, kArmPivot);
+    kidWaveArms.push(kArmPivot);
+    cheeringKidsGroup.add(kid);
+  });
+
+  group.add(cheeringKidsGroup);
 
   // Pedestal + Rotating 3D Awards (Regular Medal/Trophy vs Super Gold Trophy with Diamonds!)
   const pedestalGeo = new THREE.CylinderGeometry(0.45, 0.54, 1.05, 16);
   const pedestal = new THREE.Mesh(pedestalGeo, habitWhiteMat);
-  pedestal.position.set(0.88, 0.76, 0);
+  pedestal.position.set(0.95, 0.76, 0);
   podiumGroup.add(pedestal);
 
   const awardSpinGroup = new THREE.Group();
-  awardSpinGroup.position.set(0.88, 1.55, 0);
+  awardSpinGroup.position.set(0.95, 1.55, 0);
 
   // Regular Medal + Cup Trophy
   const regularTrophyGroup = new THREE.Group();
@@ -1719,7 +2531,7 @@ export function createCheckpointMetaStage3D(
     }
 
     const topText = plan.isGrandFinale
-      ? `GRAN META FINAL · ${plan.presenterName}`
+      ? 'META FINAL · PODIO DE CAMPEONES'
       : `META ${plan.checkpointNumber}/${plan.totalCheckpoints} · ${plan.presenterName}`;
     const subText = plan.awardTitle;
 
@@ -1774,6 +2586,7 @@ export function createCheckpointMetaStage3D(
     goldMat,
     silverMat,
     diamondMat,
+    skyArchMat,
     velvetRedMat,
     crossBeamGeo,
     carpetGeo,
@@ -1782,13 +2595,45 @@ export function createCheckpointMetaStage3D(
     childBodyGeo,
     childBodyMat,
     waveArmGeo,
-    skinMat,
+    stewardSkinMat,
+    caucasianSkinMat,
     habitWhiteMat,
     veilBlueMat,
-    sisterRobeGeo,
-    sisterVeilGeo,
+    veilLightBlueMat,
+    beltBrownMat,
+    sunglassesDarkMat,
+    sisterTunicGeo,
+    sisterScapularGeo,
+    sisterBeltGeo,
+    sisterWimpleGeo,
+    sisterHeadGeo,
+    sisterCoifBandGeo,
+    sisterVeilTopGeo,
+    sisterVeilBackGeo,
+    sunVisorBrimGeo,
+    sunGlassLensGeo,
+    sunGlassBridgeGeo,
+    sisterArmGeo,
     madresPhotoGeo,
     madresPhotoMat,
+    kidBodyGeo,
+    kidLegGeo,
+    kidHeadGeo,
+    kidHairGeo,
+    kidArmGeo,
+    subtleBlueShirtTex,
+    subtleTealShirtTex,
+    subtlePinkShirtTex,
+    subtleSignTex,
+    kidBlueShirtMat,
+    kidTealShirtMat,
+    kidPinkShirtMat,
+    kidShortsMat,
+    kidHairMat,
+    ...kidSkinTones,
+    signGeo,
+    signStickGeo,
+    signMat,
     pedestalGeo,
     medalDiscGeo,
     cupBaseGeo,
@@ -1811,6 +2656,12 @@ export function createCheckpointMetaStage3D(
       awardSpinGroup.rotation.y = timeSec * 1.6;
       awardSpinGroup.position.y = 1.55 + Math.sin(timeSec * 3.0) * 0.08;
       wavingArmPivot.rotation.z = -0.35 + Math.sin(timeSec * 6.5) * 0.45;
+      sisterWaveArms.forEach((arm, idx) => {
+        arm.rotation.z = (idx === 0 ? 0.32 : -0.32) + Math.sin(timeSec * 4.6 + idx * 1.3) * 0.28;
+      });
+      kidWaveArms.forEach((kArm, idx) => {
+        kArm.rotation.z = -0.25 + Math.sin(timeSec * 6.2 + idx * 1.7) * 0.36;
+      });
       if (isActiveMeta) {
         beaconMat.opacity = 0.14 + Math.sin(timeSec * 4.0) * 0.06;
       }
@@ -1887,15 +2738,298 @@ export function createRealHouseMesh(
 // ============================================================================
 // CIVIC, CULTURAL, UNIVERSITY, ZOO SAFARI & RACE CIRCUIT LANDMARKS
 // ============================================================================
+function createHeritageLandmarkSprite(label: string): THREE.Sprite {
+  const c = document.createElement('canvas');
+  c.width = 512;
+  c.height = 96;
+  const ctx = c.getContext('2d')!;
+
+  ctx.fillStyle = 'rgba(12, 24, 44, 0.84)';
+  ctx.beginPath();
+  ctx.roundRect(10, 10, 492, 76, 18);
+  ctx.fill();
+
+  ctx.strokeStyle = '#fbbf24';
+  ctx.lineWidth = 4;
+  ctx.stroke();
+
+  ctx.fillStyle = '#fde68a';
+  ctx.font = '700 16px Plus Jakarta Sans, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('PATRIMONIO CULTURAL MONUMENTAL', 256, 36);
+
+  ctx.fillStyle = '#ffffff';
+  ctx.font = '800 23px Outfit, sans-serif';
+  ctx.fillText(label.slice(0, 38), 256, 67);
+
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.needsUpdate = true;
+  const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false });
+  const sp = new THREE.Sprite(mat);
+  sp.scale.set(15.5, 2.9, 1);
+  return sp;
+}
+
 export function createLandmarkGroup(
   spec: LandmarkSpec,
   _texPack: ProceduralTexturePack,
 ): THREE.Group {
   const g = new THREE.Group();
   g.position.set(spec.x, 0, spec.z);
-  if (spec.rotationY) g.rotation.y = spec.rotationY;
+  if (spec.rotationY !== undefined) {
+    g.rotation.y = spec.rotationY;
+  } else if (spec.kind === 'cristo_redentor') {
+    // Face directly toward the center of the city/circuit so outstretched arms embrace the track
+    g.rotation.y = Math.atan2(-spec.x, -spec.z);
+  }
 
-  if (spec.kind === 'zoo_gate') {
+  let plaqueHeight = 18;
+
+  if (spec.kind === 'cristo_redentor') {
+    // MONUMENTAL CRISTO REDENTOR (BRAZIL) — Lush Corcovado Peak + Art Deco Pedestal + Jesus with Wide Extended Arms
+    const corcovadoGreenMat = new THREE.MeshStandardMaterial({ color: 0x15803d, roughness: 0.86 });
+    const graniteCliffMat = new THREE.MeshStandardMaterial({ color: 0x64748b, roughness: 0.82 });
+    const pedestalStoneMat = new THREE.MeshStandardMaterial({ color: 0xcbd5e1, roughness: 0.52 });
+    const soapstoneWhiteMat = new THREE.MeshPhysicalMaterial({
+      color: 0xfefefe,
+      emissive: new THREE.Color(0xfffbeb),
+      emissiveIntensity: 0.28,
+      roughness: 0.28,
+      metalness: 0.04,
+      clearcoat: 0.45,
+    });
+    const sacredHeartMat = new THREE.MeshStandardMaterial({
+      color: 0xfef08a,
+      emissive: new THREE.Color(0xf59e0b),
+      emissiveIntensity: 0.85,
+      roughness: 0.25,
+    });
+
+    // 1. Lush Tropical Corcovado Mountain Base + Granite Cliff Face
+    const mountLower = new THREE.Mesh(new THREE.ConeGeometry(42, 34, 24), corcovadoGreenMat);
+    mountLower.position.y = 16;
+    const graniteSummit = new THREE.Mesh(new THREE.CylinderGeometry(11.5, 22, 16, 16), graniteCliffMat);
+    graniteSummit.position.y = 30;
+    const terraceDeck = new THREE.Mesh(new THREE.CylinderGeometry(12.2, 12.8, 2.2, 16), pedestalStoneMat);
+    terraceDeck.position.y = 38.6;
+
+    // 2. Octagonal Art Deco Pedestal (8.2m tall)
+    const pedestalBase = new THREE.Mesh(new THREE.CylinderGeometry(4.4, 5.6, 8.2, 8), pedestalStoneMat);
+    pedestalBase.position.y = 43.8;
+    const pedestalPlinth = new THREE.Mesh(new THREE.CylinderGeometry(3.8, 4.5, 1.4, 8), soapstoneWhiteMat);
+    pedestalPlinth.position.y = 48.4;
+
+    // 3. Monumental Statue of Jesus with Wide Horizontally Outstretched Arms (~26m statue height, 26m armspan!)
+    const statue = new THREE.Group();
+    statue.position.y = 49.0;
+
+    // Flowing Art Deco Tunic Robe & Pleats
+    const lowerRobe = new THREE.Mesh(new THREE.CylinderGeometry(2.45, 3.25, 11.5, 16), soapstoneWhiteMat);
+    lowerRobe.position.y = 5.75;
+    const upperTorso = new THREE.Mesh(new THREE.CylinderGeometry(2.85, 2.45, 7.6, 16), soapstoneWhiteMat);
+    upperTorso.position.y = 14.8;
+
+    // Diagonal Mantle Sash across chest
+    const mantleSash = new THREE.Mesh(new THREE.BoxGeometry(5.2, 8.4, 3.3), soapstoneWhiteMat);
+    mantleSash.position.set(0, 13.8, 0.25);
+    mantleSash.rotation.z = 0.24;
+
+    // Sacred Heart Relief on Chest
+    const sacredHeart = new THREE.Mesh(new THREE.OctahedronGeometry(0.72, 1), sacredHeartMat);
+    sacredHeart.position.set(0, 15.6, 2.65);
+
+    // Wide Horizontally Extended Arms ("con los brazos extendidos") — 26 meters wide!
+    const armCrossBeam = new THREE.Mesh(new THREE.BoxGeometry(23.6, 2.35, 2.15), soapstoneWhiteMat);
+    armCrossBeam.position.set(0, 16.9, 0.1);
+
+    // Sculpted Draped Sleeves under both outstretched arms
+    const sleeveGeo = new THREE.BoxGeometry(9.6, 2.8, 1.65);
+    const leftSleeve = new THREE.Mesh(sleeveGeo, soapstoneWhiteMat);
+    leftSleeve.position.set(-6.4, 15.6, 0.05);
+    leftSleeve.rotation.z = 0.14;
+    const rightSleeve = new THREE.Mesh(sleeveGeo, soapstoneWhiteMat);
+    rightSleeve.position.set(6.4, 15.6, 0.05);
+    rightSleeve.rotation.z = -0.14;
+
+    // Open Welcoming Hands & Thumbs on Both Sides
+    const palmGeo = new THREE.BoxGeometry(2.15, 0.95, 0.55);
+    const leftHand = new THREE.Mesh(palmGeo, soapstoneWhiteMat);
+    leftHand.position.set(-12.7, 16.95, 0.2);
+    const rightHand = new THREE.Mesh(palmGeo, soapstoneWhiteMat);
+    rightHand.position.set(12.7, 16.95, 0.2);
+
+    // Neck, Serene Head & Flowing Hair (gently inclined forward toward the city)
+    const neck = new THREE.Mesh(new THREE.CylinderGeometry(1.05, 1.25, 1.5, 12), soapstoneWhiteMat);
+    neck.position.set(0, 19.2, 0.15);
+    const headGroup = new THREE.Group();
+    headGroup.position.set(0, 21.1, 0.35);
+    headGroup.rotation.x = 0.18; // Gentle compassionate downward gaze
+    const head = new THREE.Mesh(new THREE.SphereGeometry(1.75, 18, 16), soapstoneWhiteMat);
+    head.scale.set(0.88, 1.18, 0.95);
+    const hairVeil = new THREE.Mesh(new THREE.CylinderGeometry(1.62, 1.88, 2.6, 14), soapstoneWhiteMat);
+    hairVeil.position.set(0, -0.45, -0.35);
+    const beard = new THREE.Mesh(new THREE.ConeGeometry(0.95, 1.4, 10), soapstoneWhiteMat);
+    beard.rotation.x = Math.PI;
+    beard.position.set(0, -1.35, 0.75);
+    headGroup.add(head, hairVeil, beard);
+
+    statue.add(
+      lowerRobe,
+      upperTorso,
+      mantleSash,
+      sacredHeart,
+      armCrossBeam,
+      leftSleeve,
+      rightSleeve,
+      leftHand,
+      rightHand,
+      neck,
+      headGroup,
+    );
+    g.add(mountLower, graniteSummit, terraceDeck, pedestalBase, pedestalPlinth, statue);
+    plaqueHeight = 76;
+  } else if (spec.kind === 'maya_pyramid') {
+    // GRAN JAGUAR MAYA STEPPED PYRAMID (GUATEMALA / PETÉN / KAMINALJUYÚ HERITAGE)
+    const limestoneMat = new THREE.MeshStandardMaterial({ color: 0xd6d0c4, roughness: 0.85 });
+    const darkStoneMat = new THREE.MeshStandardMaterial({ color: 0x78716c, roughness: 0.9 });
+    for (let tier = 0; tier < 9; tier++) {
+      const w = 30 - tier * 2.65;
+      const h = 2.4;
+      const stepBox = new THREE.Mesh(new THREE.BoxGeometry(w, h, w), limestoneMat);
+      stepBox.position.y = tier * 2.35 + h * 0.5;
+      g.add(stepBox);
+    }
+    const stairRamp = new THREE.Mesh(new THREE.BoxGeometry(5.6, 23.5, 4.2), darkStoneMat);
+    stairRamp.position.set(0, 10.6, 10.2);
+    stairRamp.rotation.x = -0.46;
+    const upperSanctuary = new THREE.Mesh(new THREE.BoxGeometry(7.6, 4.8, 6.2), limestoneMat);
+    upperSanctuary.position.set(0, 23.4, -0.4);
+    const doorway = new THREE.Mesh(new THREE.BoxGeometry(2.4, 3.1, 0.6), darkStoneMat);
+    doorway.position.set(0, 22.6, 2.6);
+    const roofComb = new THREE.Mesh(new THREE.BoxGeometry(6.8, 6.6, 1.8), limestoneMat);
+    roofComb.position.set(0, 28.8, -0.8);
+    g.add(stairRamp, upperSanctuary, doorway, roofComb);
+    plaqueHeight = 35.5;
+  } else if (spec.kind === 'white_basilica') {
+    // GLEAMING WHITE FOUR-TOWER BAROQUE BASILICA (ESQUIPULAS CULTURAL HERITAGE)
+    const whiteStucco = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.36 });
+    const goldDomeMat = new THREE.MeshStandardMaterial({
+      color: 0xfacc15,
+      metalness: 0.78,
+      roughness: 0.22,
+    });
+    const nave = new THREE.Mesh(new THREE.BoxGeometry(20, 12.5, 28), whiteStucco);
+    nave.position.y = 6.25;
+    g.add(nave);
+    for (const [tx, tz] of [
+      [-9.5, 13],
+      [9.5, 13],
+      [-9.5, -13],
+      [9.5, -13],
+    ]) {
+      const belfry = new THREE.Mesh(new THREE.BoxGeometry(4.4, 21, 4.4), whiteStucco);
+      belfry.position.set(tx, 10.5, tz);
+      const cupola = new THREE.Mesh(new THREE.SphereGeometry(2.3, 14, 10), goldDomeMat);
+      cupola.position.set(tx, 21.6, tz);
+      g.add(belfry, cupola);
+    }
+    const centralDrum = new THREE.Mesh(new THREE.CylinderGeometry(5.2, 5.6, 4.5, 16), whiteStucco);
+    centralDrum.position.set(0, 14.5, 0);
+    const centralDome = new THREE.Mesh(new THREE.SphereGeometry(5.1, 18, 12), goldDomeMat);
+    centralDome.position.set(0, 17.2, 0);
+    g.add(centralDrum, centralDome);
+    plaqueHeight = 26.5;
+  } else if (spec.kind === 'colonial_cathedral') {
+    // MONUMENTAL HISPANIC-AMERICAN COLONIAL CATHEDRAL
+    const ochreStone = new THREE.MeshStandardMaterial({ color: 0xfef3c7, roughness: 0.62 });
+    const terracottaDome = new THREE.MeshStandardMaterial({ color: 0xb45309, roughness: 0.55 });
+    const darkPortal = new THREE.MeshStandardMaterial({ color: 0x451a03, roughness: 0.8 });
+    const body = new THREE.Mesh(new THREE.BoxGeometry(22, 12, 24), ochreStone);
+    body.position.y = 6;
+    const towerL = new THREE.Mesh(new THREE.BoxGeometry(4.8, 19.5, 4.8), ochreStone);
+    towerL.position.set(-9.2, 9.75, 10.5);
+    const towerR = towerL.clone();
+    towerR.position.x = 9.2;
+    const domeL = new THREE.Mesh(new THREE.SphereGeometry(2.45, 14, 10), terracottaDome);
+    domeL.position.set(-9.2, 20.1, 10.5);
+    const domeR = domeL.clone();
+    domeR.position.x = 9.2;
+    const mainCupola = new THREE.Mesh(new THREE.SphereGeometry(5.4, 18, 12), terracottaDome);
+    mainCupola.position.set(0, 13.8, -2);
+    const portalArch = new THREE.Mesh(new THREE.BoxGeometry(4.4, 6.2, 0.8), darkPortal);
+    portalArch.position.set(0, 3.1, 12.1);
+    g.add(body, towerL, towerR, domeL, domeR, mainCupola, portalArch);
+    plaqueHeight = 25.5;
+  } else if (spec.kind === 'puerta_alcala') {
+    // PUERTA DE ALCALÁ NEOCLASSICAL GRANITE MONUMENT (MADRID, SPAIN)
+    const graniteMat = new THREE.MeshStandardMaterial({ color: 0xe2e0d8, roughness: 0.58 });
+    const shadowArchMat = new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.85 });
+    const baseWall = new THREE.Mesh(new THREE.BoxGeometry(28, 13.5, 5.2), graniteMat);
+    baseWall.position.y = 6.75;
+    const attic = new THREE.Mesh(new THREE.BoxGeometry(16, 4.2, 5.6), graniteMat);
+    attic.position.y = 15.5;
+    const pediment = new THREE.Mesh(new THREE.ConeGeometry(9.2, 3.4, 4), graniteMat);
+    pediment.rotation.y = Math.PI / 4;
+    pediment.scale.set(1.25, 1, 0.45);
+    pediment.position.y = 19.1;
+    g.add(baseWall, attic, pediment);
+    for (const ax of [-8.5, 0, 8.5]) {
+      const archVoid = new THREE.Mesh(new THREE.BoxGeometry(3.8, 8.6, 5.5), shadowArchMat);
+      archVoid.position.set(ax, 4.3, 0);
+      g.add(archVoid);
+    }
+    plaqueHeight = 24;
+  } else if (spec.kind === 'sagrada_torres') {
+    // MODERNIST SAGRADA TORRES BASILICA SPIRES (BARCELONA / CATALUNYA)
+    const sandstoneMat = new THREE.MeshStandardMaterial({ color: 0xd6bfa3, roughness: 0.68 });
+    const mosaicGold = new THREE.MeshStandardMaterial({
+      color: 0xfbbf24,
+      emissive: new THREE.Color(0xf59e0b),
+      emissiveIntensity: 0.4,
+      roughness: 0.25,
+    });
+    const portalBase = new THREE.Mesh(new THREE.BoxGeometry(22, 13, 14), sandstoneMat);
+    portalBase.position.y = 6.5;
+    g.add(portalBase);
+    for (const [sx, h] of [
+      [-7.2, 30],
+      [-2.5, 35],
+      [2.5, 35],
+      [7.2, 30],
+    ]) {
+      const spire = new THREE.Mesh(new THREE.CylinderGeometry(0.95, 2.35, h, 12), sandstoneMat);
+      spire.position.set(sx, h * 0.5 + 4, 0);
+      const pinnacle = new THREE.Mesh(new THREE.OctahedronGeometry(1.35, 1), mosaicGold);
+      pinnacle.position.set(sx, h + 4.8, 0);
+      g.add(spire, pinnacle);
+    }
+    plaqueHeight = 43.5;
+  } else if (spec.kind === 'cn_tower') {
+    // MONUMENTAL CN TOWER SKYLINE NEEDLE (CANADA)
+    const concreteTowerMat = new THREE.MeshStandardMaterial({ color: 0xe2e8f0, roughness: 0.42 });
+    const skyPodGlass = new THREE.MeshPhysicalMaterial({
+      color: 0x38bdf8,
+      emissive: new THREE.Color(0x0284c7),
+      emissiveIntensity: 0.55,
+      roughness: 0.15,
+      metalness: 0.5,
+    });
+    const baseFins = new THREE.Mesh(new THREE.ConeGeometry(6.8, 18, 3), concreteTowerMat);
+    baseFins.position.y = 9;
+    const mainShaft = new THREE.Mesh(new THREE.CylinderGeometry(1.5, 3.2, 48, 16), concreteTowerMat);
+    mainShaft.position.y = 24;
+    const podLower = new THREE.Mesh(new THREE.CylinderGeometry(5.6, 3.6, 3.2, 24), concreteTowerMat);
+    podLower.position.y = 39.5;
+    const podGlassRing = new THREE.Mesh(new THREE.CylinderGeometry(5.8, 5.8, 2.2, 24), skyPodGlass);
+    podGlassRing.position.y = 42.1;
+    const podRoof = new THREE.Mesh(new THREE.CylinderGeometry(3.2, 5.6, 2.2, 24), concreteTowerMat);
+    podRoof.position.y = 44.2;
+    const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.95, 18, 10), concreteTowerMat);
+    mast.position.y = 56;
+    g.add(baseFins, mainShaft, podLower, podGlassRing, podRoof, mast);
+    plaqueHeight = 68;
+  } else if (spec.kind === 'zoo_gate') {
     const timberMat = new THREE.MeshStandardMaterial({ color: 0x78350f, roughness: 0.85 });
     const leafMat = new THREE.MeshStandardMaterial({ color: 0x15803d, roughness: 0.78 });
     const goldMat = new THREE.MeshStandardMaterial({ color: 0xfacc15, metalness: 0.7, roughness: 0.25 });
@@ -1905,7 +3039,10 @@ export function createLandmarkGroup(
     const rightTrunk = leftTrunk.clone();
     rightTrunk.position.x = 8.2;
 
-    const topBeam = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.45, 18.5, 10).rotateZ(Math.PI / 2), timberMat);
+    const topBeam = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.45, 0.45, 18.5, 10).rotateZ(Math.PI / 2),
+      timberMat,
+    );
     topBeam.position.set(0, 8.8, 0);
 
     const thatch = new THREE.Mesh(new THREE.ConeGeometry(4.2, 2.4, 8), leafMat);
@@ -1916,6 +3053,7 @@ export function createLandmarkGroup(
     const plaque = new THREE.Mesh(new THREE.BoxGeometry(11.5, 1.5, 0.4), goldMat);
     plaque.position.set(0, 8.8, 0);
     g.add(leftTrunk, rightTrunk, topBeam, thatch, thatchR, plaque);
+    plaqueHeight = 14;
   } else if (spec.kind === 'race_grandstand') {
     const concreteMat = new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.65 });
     const canopyMat = new THREE.MeshStandardMaterial({ color: 0xf8fafc, roughness: 0.4, metalness: 0.2 });
@@ -1934,6 +3072,7 @@ export function createLandmarkGroup(
     const fascia = new THREE.Mesh(new THREE.BoxGeometry(29.3, 0.65, 0.4), redAccentMat);
     fascia.position.set(0, 9.2, -1.9);
     g.add(backWall, roof, fascia);
+    plaqueHeight = 14.5;
   } else if (spec.kind === 'arch_catalina') {
     const stuccoYellow = new THREE.MeshStandardMaterial({ color: 0xeab308, roughness: 0.65 });
     const whiteTrim = new THREE.MeshStandardMaterial({ color: 0xf8fafc, roughness: 0.5 });
@@ -1960,6 +3099,7 @@ export function createLandmarkGroup(
     dome.position.set(0, 14.9, 0);
 
     g.add(leftPillar, rightPillar, upperSpan, cornice, turret, clockFace, dome);
+    plaqueHeight = 19.2;
   } else if (spec.kind === 'campus_skybridge') {
     const brickMat = new THREE.MeshStandardMaterial({ color: 0x9a3412, roughness: 0.68 });
     const concreteMat = new THREE.MeshStandardMaterial({ color: 0xe2e8f0, roughness: 0.45 });
@@ -1981,6 +3121,7 @@ export function createLandmarkGroup(
     roof.position.set(0, 9.0, 0);
 
     g.add(towerL, towerR, deck, canopy, roof);
+    plaqueHeight = 13.2;
   } else if (spec.kind === 'stone_bridge') {
     const stoneMat = new THREE.MeshStandardMaterial({ color: 0x78716c, roughness: 0.85 });
     const parapetL = new THREE.Mesh(new THREE.BoxGeometry(1.4, 1.8, 22), stoneMat);
@@ -1995,6 +3136,7 @@ export function createLandmarkGroup(
       g.add(postL, postR);
     }
     g.add(parapetL, parapetR);
+    plaqueHeight = 8.5;
   } else if (spec.kind === 'university_hall') {
     const brickMat = new THREE.MeshStandardMaterial({ color: 0x9a3412, roughness: 0.65 });
     const glassMat = new THREE.MeshStandardMaterial({ color: 0x0f172a, metalness: 0.7, roughness: 0.2 });
@@ -2007,6 +3149,7 @@ export function createLandmarkGroup(
     const cornice = new THREE.Mesh(new THREE.BoxGeometry(23, 0.8, 12), concreteMat);
     cornice.position.set(0, 12.4, 0);
     g.add(wingA, atrium, cornice);
+    plaqueHeight = 17.5;
   } else if (spec.kind === 'modern_congress') {
     const whiteMat = new THREE.MeshStandardMaterial({ color: 0xf8fafc, roughness: 0.35 });
     const deck = new THREE.Mesh(new THREE.BoxGeometry(30, 2.2, 16), whiteMat);
@@ -2020,12 +3163,10 @@ export function createLandmarkGroup(
       whiteMat,
     );
     domeLeft.position.set(-10.5, 2.2, 2);
-    const bowlRight = new THREE.Mesh(
-      new THREE.CylinderGeometry(6, 3.8, 3.2, 24),
-      whiteMat,
-    );
+    const bowlRight = new THREE.Mesh(new THREE.CylinderGeometry(6, 3.8, 3.2, 24), whiteMat);
     bowlRight.position.set(10.5, 3.6, 2);
     g.add(deck, tower1, tower2, domeLeft, bowlRight);
+    plaqueHeight = 30.5;
   } else if (spec.kind === 'coastal_lighthouse') {
     const whiteMat = new THREE.MeshStandardMaterial({ color: 0xf8fafc, roughness: 0.45 });
     const redMat = new THREE.MeshStandardMaterial({ color: 0xdc2626, roughness: 0.45 });
@@ -2041,6 +3182,7 @@ export function createLandmarkGroup(
     const lantern = new THREE.Mesh(new THREE.CylinderGeometry(2.1, 2.1, 2.8, 14), lampMat);
     lantern.position.y = 17.4;
     g.add(base, band, lantern);
+    plaqueHeight = 22.5;
   } else if (spec.kind === 'central_plaza') {
     const stoneMat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, roughness: 0.72 });
     const waterMat = new THREE.MeshStandardMaterial({ color: 0x0ea5e9, roughness: 0.15, metalness: 0.3 });
@@ -2053,17 +3195,29 @@ export function createLandmarkGroup(
     const kiosk = new THREE.Mesh(new THREE.ConeGeometry(3.6, 2.6, 8), stoneMat);
     kiosk.position.y = 4.2;
     g.add(pad, basin, water, kiosk);
+    plaqueHeight = 9.5;
   } else {
-    const marbleMat = new THREE.MeshStandardMaterial({ color: 0xf1f5f9, roughness: 0.4 });
+    // Monumental Obelisk (e.g., Obelisco de Buenos Aires / Reforma)
+    const marbleMat = new THREE.MeshStandardMaterial({ color: 0xf8fafc, roughness: 0.36 });
     const goldMat = new THREE.MeshStandardMaterial({ color: 0xf59e0b, metalness: 0.88, roughness: 0.2 });
-    const plinth = new THREE.Mesh(new THREE.CylinderGeometry(4.2, 5.2, 2.4, 16), marbleMat);
-    plinth.position.y = 1.2;
-    const shaft = new THREE.Mesh(new THREE.CylinderGeometry(1.1, 2.1, 22, 12), marbleMat);
-    shaft.position.y = 13.2;
-    const crown = new THREE.Mesh(new THREE.SphereGeometry(1.8, 16, 16), goldMat);
-    crown.position.y = 25;
-    g.add(plinth, shaft, crown);
+    const plinth = new THREE.Mesh(new THREE.BoxGeometry(7.2, 3.2, 7.2), marbleMat);
+    plinth.position.y = 1.6;
+    const shaft = new THREE.Mesh(new THREE.CylinderGeometry(1.15, 2.55, 32, 4), marbleMat);
+    shaft.rotation.y = Math.PI / 4;
+    shaft.position.y = 19.2;
+    const pyramidion = new THREE.Mesh(new THREE.ConeGeometry(1.62, 3.8, 4), goldMat);
+    pyramidion.rotation.y = Math.PI / 4;
+    pyramidion.position.y = 37.1;
+    g.add(plinth, shaft, pyramidion);
+    plaqueHeight = 42.5;
+  }
+
+  if (spec.name && spec.kind !== 'stone_bridge' && spec.kind !== 'race_grandstand') {
+    const plaqueSprite = createHeritageLandmarkSprite(spec.name);
+    plaqueSprite.position.set(0, plaqueHeight, 0);
+    g.add(plaqueSprite);
   }
 
   return g;
 }
+

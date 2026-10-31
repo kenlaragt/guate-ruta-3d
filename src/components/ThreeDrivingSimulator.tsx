@@ -7,7 +7,6 @@ import {
   REAL_PEOPLE_ASSETS,
 } from '../data/awardsCatalog';
 import { getCarById } from '../data/carsCatalog';
-import { metersToLatLon } from '../data/worldMapsCatalog';
 import {
   CarRig3D,
   createCheckpointMetaStage3D,
@@ -18,6 +17,11 @@ import {
   WalkingPedestrian3D,
 } from '../engine/models3d';
 import { createProceduralTexturePack } from '../engine/proceduralTextures';
+import {
+  createGuidanceArrowRig3D,
+  createScenicWorldEnvironment3D,
+  ScenicWorldHandle3D,
+} from '../engine/scenicWorld3d';
 import { soundEngine } from '../engine/soundEngine';
 import {
   AnimatedWorldWildlifeHandle,
@@ -28,9 +32,11 @@ import {
   AwardDeliveryRecord,
   CameraMode,
   CarModelId,
+  DriveExperienceMode,
   GameState,
   GearLabel,
   PlayerHudTelemetry,
+  RaceParticipantSummary,
   RemoteOnlinePlayer,
   RoadNode2D,
   RoadSegmentSpec,
@@ -52,6 +58,7 @@ interface ThreeDrivingSimulatorProps {
   mapOrderIndex: number;
   extraRoads: RoadSegmentSpec[];
   gameState: GameState;
+  driveMode: DriveExperienceMode;
   sessionMode: SessionMode;
   cameraMode: CameraMode;
   realMapOverlayMode: boolean;
@@ -85,9 +92,11 @@ interface ThreeDrivingSimulatorProps {
     p2Pos: { x: number; z: number; heading: number } | null,
   ) => void;
   onAwardDelivered?: (award: AwardDeliveryRecord) => void;
+  onRaceAllWinSummary?: (participants: RaceParticipantSummary[], elapsedSec: number) => void;
   onRoundComplete: (summary: { lapTimeSec: number; checkpoints: number; topSpeedKmh: number }) => void;
   resetTrigger: number;
   descentTrigger?: number;
+  celebrateAllWinSeq?: number;
 }
 
 // Pre-allocated math helpers at module scope (Zero GC inside render loop)
@@ -97,21 +106,21 @@ const _p2CamIdealPos = new THREE.Vector3();
 const _p2CamIdealLook = new THREE.Vector3();
 
 const GEAR_SPEED_RATIOS: Record<number, number> = {
-  1: 0.23,
-  2: 0.4,
-  3: 0.57,
-  4: 0.73,
-  5: 0.88,
+  1: 0.32,
+  2: 0.5,
+  3: 0.66,
+  4: 0.8,
+  5: 0.91,
   6: 1.0,
 };
 
 const GEAR_TORQUE_MULT: Record<number, number> = {
-  1: 1.42,
-  2: 1.18,
-  3: 1.02,
-  4: 0.9,
-  5: 0.8,
-  6: 0.72,
+  1: 1.75,
+  2: 1.45,
+  3: 1.25,
+  4: 1.1,
+  5: 0.98,
+  6: 0.9,
 };
 
 interface BuildingCollider {
@@ -130,6 +139,11 @@ interface TrafficAgent {
   laneOffset: number;
   reverseDir: boolean;
   pedalPhase: number;
+  isRaceParticipant?: boolean;
+  alias?: string;
+  transportName?: string;
+  valueMessage?: string;
+  checkpointsPassed?: number;
 }
 
 interface PedestrianAgent {
@@ -170,6 +184,7 @@ export const ThreeDrivingSimulator: React.FC<ThreeDrivingSimulatorProps> = ({
   extraRoads,
   realMapOverlayMode,
   gameState,
+  driveMode,
   sessionMode,
   cameraMode,
   timeOfDay,
@@ -187,38 +202,51 @@ export const ThreeDrivingSimulator: React.FC<ThreeDrivingSimulatorProps> = ({
   onLocalNetworkTick,
   onTelemetry,
   onAwardDelivered,
+  onRaceAllWinSummary,
   onRoundComplete,
   resetTrigger,
   descentTrigger = 0,
+  celebrateAllWinSeq = 0,
 }) => {
   const mountRef = useRef<HTMLDivElement | null>(null);
   const descentStartTimeRef = useRef<number>(performance.now());
+  const prevCelebrateSeqRef = useRef<number>(celebrateAllWinSeq);
 
   // Store latest props in refs so WebGL context stays stable across HUD state updates
   const latestPropsRef = useRef({
     mapOrderIndex,
     gameState,
+    driveMode,
     sessionMode,
     cameraMode,
     timeOfDay,
     soundMuted,
+    p1Alias,
+    p2Alias,
     p1Transmission,
+    celebrateAllWinSeq,
     onLocalNetworkTick,
     onTelemetry,
     onAwardDelivered,
+    onRaceAllWinSummary,
     onRoundComplete,
   });
   latestPropsRef.current = {
     mapOrderIndex,
     gameState,
+    driveMode,
     sessionMode,
     cameraMode,
     timeOfDay,
     soundMuted,
+    p1Alias,
+    p2Alias,
     p1Transmission,
+    celebrateAllWinSeq,
     onLocalNetworkTick,
     onTelemetry,
     onAwardDelivered,
+    onRaceAllWinSummary,
     onRoundComplete,
   };
 
@@ -234,8 +262,11 @@ export const ThreeDrivingSimulator: React.FC<ThreeDrivingSimulatorProps> = ({
     checkpointIdx: 0,
     checkpointsCollected: 0,
     lapTimeSec: 0,
+    raceRemainingSec: 240,
+    addTimeBonusSec: 0,
     topSpeedKmh: 0,
     finished: false,
+    allWinAwarded: false,
   });
 
   const p2PhysicsRef = useRef({
@@ -246,6 +277,8 @@ export const ThreeDrivingSimulator: React.FC<ThreeDrivingSimulatorProps> = ({
     steerNorm: 0,
     gear: '1' as GearLabel,
     rpm: 900,
+    checkpointIdx: 0,
+    checkpointsCollected: 0,
   });
 
   // Handle manual/UI gear requests from SimulatorControlsRig
@@ -271,7 +304,7 @@ export const ThreeDrivingSimulator: React.FC<ThreeDrivingSimulatorProps> = ({
     soundEngine.setMuted(soundMuted);
   }, [soundMuted]);
 
-  // Reset positions when map or resetTrigger changes
+  // Reset positions & 4-minute Add Time clock when map, driveMode or resetTrigger changes
   useEffect(() => {
     p1PhysicsRef.current = {
       x: map.spawn.x,
@@ -285,8 +318,11 @@ export const ThreeDrivingSimulator: React.FC<ThreeDrivingSimulatorProps> = ({
       checkpointIdx: 0,
       checkpointsCollected: 0,
       lapTimeSec: 0,
+      raceRemainingSec: 240,
+      addTimeBonusSec: 0,
       topSpeedKmh: 0,
       finished: false,
+      allWinAwarded: false,
     };
     p2PhysicsRef.current = {
       x: map.spawn.x + 3.6,
@@ -296,8 +332,10 @@ export const ThreeDrivingSimulator: React.FC<ThreeDrivingSimulatorProps> = ({
       steerNorm: 0,
       gear: '1',
       rpm: 900,
+      checkpointIdx: 0,
+      checkpointsCollected: 0,
     };
-  }, [map, resetTrigger]);
+  }, [map, driveMode, resetTrigger]);
 
   // Trigger synchronized sky-to-street satellite camera descent when map changes or user clicks "Bajar Satélite"
   useEffect(() => {
@@ -386,8 +424,11 @@ export const ThreeDrivingSimulator: React.FC<ThreeDrivingSimulatorProps> = ({
     rimLight.position.set(-140, 80, -130);
     scene.add(rimLight);
 
-    // Helper to apply time-of-day atmosphere (transparent sky/fog when layered over live Google Maps)
+    let scenicWorld: ScenicWorldHandle3D | null = null;
+
+    // Helper to apply time-of-day atmosphere (crisp horizon visibility for mountains, volcanoes & Cristo Redentor)
     const applyAtmosphere = (tod: TimeOfDay) => {
+      scenicWorld?.setTimeOfDay(tod);
       if (tod === 'NIGHT') {
         if (realMapOverlayMode) {
           scene.background = null;
@@ -395,7 +436,7 @@ export const ThreeDrivingSimulator: React.FC<ThreeDrivingSimulatorProps> = ({
         } else {
           const bg = new THREE.Color(0x091122);
           scene.background = bg;
-          scene.fog = new THREE.FogExp2(0x091122, 0.0016);
+          scene.fog = new THREE.FogExp2(0x091122, 0.00085);
         }
         sunLight.color.setHex(0x93c5fd);
         sunLight.intensity = 0.65;
@@ -408,7 +449,7 @@ export const ThreeDrivingSimulator: React.FC<ThreeDrivingSimulatorProps> = ({
         } else {
           const bg = new THREE.Color(0xd98a5f);
           scene.background = bg;
-          scene.fog = new THREE.FogExp2(0xd98a5f, 0.0013);
+          scene.fog = new THREE.FogExp2(0xd98a5f, 0.00048);
         }
         sunLight.color.setHex(0xffb86c);
         sunLight.intensity = 2.25;
@@ -420,15 +461,15 @@ export const ThreeDrivingSimulator: React.FC<ThreeDrivingSimulatorProps> = ({
           scene.background = null;
           scene.fog = null;
         } else {
-          const bg = new THREE.Color(map.skyTintDay || '#649bd6');
+          const bg = new THREE.Color(map.skyTintDay || '#58b4f8');
           scene.background = bg;
-          scene.fog = new THREE.FogExp2(bg.getHex(), 0.0012);
+          scene.fog = new THREE.FogExp2(0xdbf0ff, 0.00038);
         }
         sunLight.color.setHex(0xfff6e5);
-        sunLight.intensity = 2.15;
+        sunLight.intensity = 2.2;
         sunLight.position.set(120, 175, 95);
-        hemiLight.intensity = 0.92;
-        renderer.toneMappingExposure = 1.06;
+        hemiLight.intensity = 0.96;
+        renderer.toneMappingExposure = 1.07;
       }
     };
     applyAtmosphere(latestPropsRef.current.timeOfDay);
@@ -454,79 +495,13 @@ export const ThreeDrivingSimulator: React.FC<ThreeDrivingSimulatorProps> = ({
       }
       for (const lm of map.landmarks) {
         const dSq = (cx - lm.x) * (cx - lm.x) + (cz - lm.z) * (cz - lm.z);
-        if (dSq < 22 * 22) return false;
+        if (dSq < 24 * 24) return false;
       }
       return true;
     };
 
-    // Build stylized 3D circuits, 3D houses, trees, volcanoes, and landmarks (zero real satellite street exposure)
+    // Build stylized 3D circuits, 3D houses, trees, cover-art landscapes, moving water, and landmarks
     if (!realMapOverlayMode) {
-      // Stylized Scenic Ground Plane
-      const groundGeo = new THREE.PlaneGeometry(2600, 2600);
-      groundGeo.rotateX(-Math.PI / 2);
-      const groundMat = new THREE.MeshStandardMaterial({
-        color: new THREE.Color(map.groundTint),
-        roughness: 0.94,
-        metalness: 0.02,
-      });
-      const groundMesh = new THREE.Mesh(groundGeo, groundMat);
-      groundMesh.position.y = -0.02;
-      groundMesh.receiveShadow = true;
-      scene.add(groundMesh);
-
-      // Optional Coastal / Lake Water Plane
-      if (map.hasCoastalWater) {
-        const waterGeo = new THREE.PlaneGeometry(2600, 900);
-        waterGeo.rotateX(-Math.PI / 2);
-        const waterMat = new THREE.MeshStandardMaterial({
-          color:
-            map.id === 'caribe_islas' || map.id === 'gt_peten_flores'
-              ? 0x06b6d4
-              : 0x0284c7,
-          roughness: 0.14,
-          metalness: 0.55,
-        });
-        const water = new THREE.Mesh(waterGeo, waterMat);
-        if (map.waterSide === 'east') {
-          water.rotation.y = Math.PI / 2;
-          water.position.set(690, 0.04, 0);
-        } else if (map.waterSide === 'west') {
-          water.rotation.y = Math.PI / 2;
-          water.position.set(-690, 0.04, 0);
-        } else if (map.waterSide === 'north') {
-          water.position.set(0, 0.04, -650);
-        } else {
-          water.position.set(0, 0.04, 650);
-        }
-        scene.add(water);
-      }
-
-      // Horizon Volcanoes & Mountains (Volcán de Agua, Fuego, Acatenango, Jumay, etc.)
-      for (const peak of map.peaks) {
-        const coneGeo = new THREE.ConeGeometry(peak.radius, peak.height, 28);
-        const coneMat = new THREE.MeshStandardMaterial({
-          color: 0x334155,
-          roughness: 0.88,
-        });
-        const cone = new THREE.Mesh(coneGeo, coneMat);
-        cone.position.set(peak.x, peak.height / 2 - 4, peak.z);
-        scene.add(cone);
-
-        if (peak.hasPlume) {
-          const plumeMat = new THREE.MeshStandardMaterial({
-            color: 0xcbd5e1,
-            roughness: 0.95,
-            transparent: true,
-            opacity: 0.55,
-          });
-          for (let p = 0; p < 3; p++) {
-            const puff = new THREE.Mesh(new THREE.SphereGeometry(18 + p * 9, 12, 10), plumeMat);
-            puff.position.set(peak.x - p * 14, peak.height + 12 + p * 22, peak.z);
-            scene.add(puff);
-          }
-        }
-      }
-
       // Build All Road Ribbons & Intersection Discs
       const junctionSet = new Map<
         string,
@@ -784,6 +759,18 @@ export const ThreeDrivingSimulator: React.FC<ThreeDrivingSimulatorProps> = ({
         crownInst.computeBoundingSphere();
         scene.add(trunkInst, crownInst);
       }
+
+      // Build Cover-Art 3D Scenic Horizon Dome, Mountains, Volcanoes, Moving Seas/Lakes/Lagoons/Rivers,
+      // 3D Palm Trees, Flower Meadows, and Intercultural / Disability Respect / 19th-20th C. Ludic Games Signs
+      scenicWorld = createScenicWorldEnvironment3D(
+        map,
+        allRoads,
+        colliders,
+        texPack,
+        isSoftwareGl,
+      );
+      scenicWorld.setTimeOfDay(latestPropsRef.current.timeOfDay);
+      scene.add(scenicWorld.group);
     }
 
     // Sky White Clouds & 3D Flying Songbirds ("Pajaritos")
@@ -873,16 +860,18 @@ export const ThreeDrivingSimulator: React.FC<ThreeDrivingSimulatorProps> = ({
     };
     syncMetaStageToCheckpoint(p1PhysicsRef.current.checkpointIdx);
 
-    // Create Player 1 Vehicle Rig (Car, Tuk Tuk, Bicicleta or Camión)
+    // Create Player 1 Vehicle Rig (Car, Cuatrimoto Eléctrica, Triciclo Eléctrico, Tuk Tuk, Bicicleta or Camión)
     const p1Spec = getCarById(p1CarId);
     const p1Rig = createRealisticCarRig(
       p1Spec,
       p1Paint,
       texPack.contactShadow,
       isSoftwareGl,
-      sessionMode !== 'SOLO' ? p1Alias || 'Piloto 1' : undefined,
+      sessionMode !== 'SOLO' || driveMode === 'RACE_4MIN' ? p1Alias || 'Piloto 1' : undefined,
+      p1Spec.valueMessage,
     );
     scene.add(p1Rig.group);
+    const p1LabelSprite = p1Rig.group.getObjectByName('driverLabelSprite');
 
     // Create Player 2 Vehicle Rig (visible in SPLIT_2P)
     const p2Spec = getCarById(p2CarId);
@@ -892,11 +881,18 @@ export const ThreeDrivingSimulator: React.FC<ThreeDrivingSimulatorProps> = ({
       texPack.contactShadow,
       isSoftwareGl,
       p2Alias || 'Piloto 2',
+      p2Spec.valueMessage,
     );
     p2Rig.group.visible = sessionMode === 'SPLIT_2P';
     scene.add(p2Rig.group);
 
-    // Create Live Traffic: Bicicletas, Tuk Tuks, Pickups 4x4, Camiones & Carros
+    // 3D Overhead Route Guidance Arrows pointing to Next Meta (for P1 & P2)
+    const p1GuideArrow = createGuidanceArrowRig3D(0xfbbf24);
+    scene.add(p1GuideArrow.group);
+    const p2GuideArrow = createGuidanceArrowRig3D(0x38bdf8);
+    scene.add(p2GuideArrow.group);
+
+    // Create Live Traffic + Participating Race Vehicles (with 3D Avatars & Value Messages on Every Vehicle!)
     const aiTraffic: TrafficAgent[] = [];
     const trafficBlueprints: Array<{
       id: CarModelId;
@@ -908,29 +904,30 @@ export const ThreeDrivingSimulator: React.FC<ThreeDrivingSimulatorProps> = ({
       ? [
           { id: 'nissan_calsonic', paint: '#0284c7', lane: -2.6, speed: 24.5, reverse: false },
           { id: 'lamborghini', paint: '#eab308', lane: 2.6, speed: 26.2, reverse: false },
+          { id: 'cuatrimoto_el', paint: '#16a34a', lane: -3.1, speed: 18.4, reverse: false },
+          { id: 'triciclo_el', paint: '#0284c7', lane: 3.1, speed: 16.5, reverse: false },
           { id: 'pickup', paint: '#2563eb', lane: -2.4, speed: 20.8, reverse: false },
           { id: 'toyota_supra', paint: '#dc2626', lane: 2.3, speed: 23.4, reverse: false },
           { id: 'toyota_gt', paint: '#f8fafc', lane: -2.0, speed: 25.1, reverse: false },
-          { id: 'tuk_tuk', paint: '#dc2626', lane: 3.1, speed: 12.5, reverse: false },
+          { id: 'tuk_tuk', paint: '#dc2626', lane: 3.2, speed: 12.5, reverse: false },
           { id: 'bicicleta', paint: '#16a34a', lane: 3.8, speed: 7.2, reverse: false },
         ]
       : [
+          { id: 'cuatrimoto_el', paint: '#16a34a', lane: 2.6, speed: 12.8, reverse: false },
+          { id: 'triciclo_el', paint: '#0284c7', lane: 2.7, speed: 11.4, reverse: false },
           { id: 'tuk_tuk', paint: '#dc2626', lane: 2.5, speed: 9.2, reverse: false },
           { id: 'bicicleta', paint: '#16a34a', lane: 3.7, speed: 5.5, reverse: false },
           { id: 'pickup', paint: '#2563eb', lane: 2.4, speed: 13.0, reverse: false },
+          { id: 'cuatrimoto_el', paint: '#f97316', lane: 2.6, speed: 12.4, reverse: true },
+          { id: 'triciclo_el', paint: '#eab308', lane: 2.7, speed: 11.1, reverse: true },
           { id: 'tuk_tuk', paint: '#eab308', lane: 2.5, speed: 8.9, reverse: true },
           { id: 'bicicleta', paint: '#0284c7', lane: 3.8, speed: 5.2, reverse: true },
           { id: 'camion', paint: '#f8fafc', lane: 2.3, speed: 10.4, reverse: true },
           { id: 'pickup', paint: '#dc2626', lane: 2.4, speed: 12.8, reverse: true },
           { id: 'toyota_corolla', paint: '#cbd5e1', lane: 2.4, speed: 12.6, reverse: false },
-          { id: 'tuk_tuk', paint: '#0284c7', lane: 2.6, speed: 9.4, reverse: false },
-          { id: 'bicicleta', paint: '#dc2626', lane: 3.6, speed: 5.7, reverse: false },
           { id: 'byd_f', paint: '#0284c7', lane: 2.4, speed: 11.8, reverse: false },
           { id: 'camion', paint: '#1d4ed8', lane: 2.3, speed: 9.6, reverse: false },
-          { id: 'pickup', paint: '#65a30d', lane: 2.4, speed: 13.4, reverse: false },
           { id: 'nissan_sentra', paint: '#f97316', lane: 2.4, speed: 13.2, reverse: true },
-          { id: 'tuk_tuk', paint: '#16a34a', lane: 2.5, speed: 9.1, reverse: true },
-          { id: 'bicicleta', paint: '#eab308', lane: 3.65, speed: 5.6, reverse: false },
           { id: 'toyota_supra', paint: '#eab308', lane: 2.4, speed: 14.2, reverse: true },
         ];
     const candidateRoads = map.roads.filter((r) => r.points.length >= 2);
@@ -945,6 +942,8 @@ export const ThreeDrivingSimulator: React.FC<ThreeDrivingSimulatorProps> = ({
           bp.paint || aiSpec.defaultPaint,
           texPack.contactShadow,
           isSoftwareGl,
+          undefined,
+          aiSpec.valueMessage,
         );
         scene.add(aiRig.group);
         aiTraffic.push({
@@ -956,6 +955,54 @@ export const ThreeDrivingSimulator: React.FC<ThreeDrivingSimulatorProps> = ({
           laneOffset: Math.min(bp.lane, road.width * 0.44),
           reverseDir: bp.reverse,
           pedalPhase: i * 1.3,
+        });
+      }
+
+      // Dedicated Companion Race Participants when in 4-Minute Add Time Race Mode ("se vea participar otros carros")
+      if (driveMode === 'RACE_4MIN') {
+        const raceLoopPath: RoadNode2D[] =
+          map.checkpoints.length >= 3
+            ? [map.spawn, ...map.checkpoints, map.spawn]
+            : candidateRoads[0].points;
+        const participantRoster: Array<{
+          alias: string;
+          carId: CarModelId;
+          paint: string;
+          lane: number;
+          speed: number;
+        }> = [
+          { alias: 'Mateo', carId: 'cuatrimoto_el', paint: '#16a34a', lane: -1.8, speed: 16.8 },
+          { alias: 'Sofía', carId: 'triciclo_el', paint: '#0284c7', lane: 1.9, speed: 15.6 },
+          { alias: 'Valentina', carId: 'toyota_supra', paint: '#ef4444', lane: -2.1, speed: 20.5 },
+          { alias: 'Lucas', carId: 'nissan_calsonic', paint: '#2563eb', lane: 2.1, speed: 21.4 },
+          { alias: 'Diego', carId: 'pickup', paint: '#eab308', lane: -1.6, speed: 18.6 },
+        ];
+        participantRoster.forEach((rp, idx) => {
+          const rpSpec = getCarById(rp.carId);
+          const rpRig = createRealisticCarRig(
+            rpSpec,
+            rp.paint,
+            texPack.contactShadow,
+            isSoftwareGl,
+            rp.alias,
+            rpSpec.valueMessage,
+          );
+          scene.add(rpRig.group);
+          aiTraffic.push({
+            rig: rpRig,
+            path: raceLoopPath,
+            segIndex: idx % Math.max(1, raceLoopPath.length - 1),
+            t: (0.06 + idx * 0.14) % 0.85,
+            speed: rp.speed,
+            laneOffset: rp.lane,
+            reverseDir: false,
+            pedalPhase: idx * 0.9,
+            isRaceParticipant: true,
+            alias: rp.alias,
+            transportName: rpSpec.name,
+            valueMessage: rpSpec.valueMessage,
+            checkpointsPassed: 1,
+          });
         });
       }
     }
@@ -1033,8 +1080,76 @@ export const ThreeDrivingSimulator: React.FC<ThreeDrivingSimulatorProps> = ({
       }
     }
 
-    // Dynamic Map of Remote Online Multiplayer Car Rigs
-    const remoteRigs = new Map<string, { rig: CarRig3D; carId: CarModelId; alias: string; paintHex: string }>();
+    // Dynamic Map of Remote Online Multiplayer Car Rigs (with Overhead Chosen Player Name + Chosen Transport + Value Motto)
+    const remoteRigs = new Map<
+      string,
+      { rig: CarRig3D; carId: CarModelId; alias: string; paintHex: string; valueMessage?: string }
+    >();
+
+    const buildAndEmitAllWinSummary = () => {
+      const props = latestPropsRef.current;
+      const p1 = p1PhysicsRef.current;
+      const p2 = p2PhysicsRef.current;
+      if (p1.allWinAwarded) return;
+      p1.allWinAwarded = true;
+      soundEngine.playGrandTrophyFanfare();
+
+      const participants: RaceParticipantSummary[] = [
+        {
+          id: 'local_p1',
+          alias: props.p1Alias || 'Piloto 1',
+          vehicleName: p1Spec.name,
+          valueMessage: p1Spec.valueMessage,
+          checkpoints: Math.max(1, p1.checkpointsCollected),
+          isHuman: true,
+          medalTitle: 'Medalla de Oro · Todos Somos Ganadores',
+        },
+      ];
+
+      if (props.sessionMode === 'SPLIT_2P') {
+        participants.push({
+          id: 'local_p2',
+          alias: props.p2Alias || 'Piloto 2',
+          vehicleName: p2Spec.name,
+          valueMessage: p2Spec.valueMessage,
+          checkpoints: Math.max(1, p2.checkpointsCollected),
+          isHuman: true,
+          medalTitle: 'Medalla de Oro · Todos Somos Ganadores',
+        });
+      }
+
+      if (props.sessionMode === 'ONLINE_MULTI') {
+        for (const [peerId, peer] of remotePlayersRef.current.entries()) {
+          const peerSpec = getCarById(peer.carId);
+          participants.push({
+            id: `online_${peerId}`,
+            alias: peer.alias || 'Piloto en Línea',
+            vehicleName: peerSpec.name,
+            valueMessage: peer.valueMessage || peerSpec.valueMessage,
+            checkpoints: Math.max(1, peer.checkpoints || 1),
+            isHuman: true,
+            isOnlinePeer: true,
+            medalTitle: 'Medalla de Oro · Participación en Línea',
+          });
+        }
+      }
+
+      aiTraffic
+        .filter((ag) => ag.isRaceParticipant)
+        .forEach((ag, idx) => {
+          participants.push({
+            id: `companion_${idx}`,
+            alias: ag.alias || `Corredor ${idx + 1}`,
+            vehicleName: ag.transportName || 'Vehículo 3D',
+            valueMessage: ag.valueMessage || 'Juego Limpio y Amistad',
+            checkpoints: Math.max(1, ag.checkpointsPassed || 1),
+            isHuman: false,
+            medalTitle: 'Medalla de Oro · Compañero de Pista',
+          });
+        });
+
+      props.onRaceAllWinSummary?.(participants, Math.max(1, Math.round(p1.lapTimeSec)));
+    };
 
     // Pre-compile shaders on hardware GPU
     if (!isSoftwareGl) {
@@ -1132,43 +1247,66 @@ export const ThreeDrivingSimulator: React.FC<ThreeDrivingSimulatorProps> = ({
       nitroActive: boolean,
       dt: number,
     ) => {
-      state.steerNorm = THREE.MathUtils.damp(state.steerNorm, steerTarget, 9.5, dt);
+      state.steerNorm = THREE.MathUtils.damp(state.steerNorm, steerTarget, 12.5, dt);
 
       const speedAbsKmh = Math.abs(state.speedMs) * 3.6;
 
-      // Automatic transmission gear logic
+      // Never leave driver stuck in Neutral when pressing Gas, and allow smooth reverse when holding Brake from stop
+      if (state.gear === 'N' && throttleIn > 0.1) {
+        state.gear = '1';
+      }
+
+      // Automatic transmission gear logic + smart MT redline/stall assist so car never stalls or hits a wall in 1st gear
       if (transmission === 'AT') {
         if (state.gear === 'R') {
-          if (throttleIn > 0.1 && state.speedMs > -0.4 && brakeIn < 0.1) {
-            // Keep R unless user pressed forward from stop? In AT if gear === 'R', throttle reverses!
+          if (throttleIn > 0.1 && state.speedMs >= -0.25 && brakeIn < 0.1) {
+            // Pressing Gas from standstill automatically engages Drive (D1) so Gas always moves forward!
+            state.gear = '1';
           }
-          // Also allow quick reverse with S/Down when stopped in D
-        } else if (state.gear !== 'N') {
-          if (brakeIn > 0.5 && state.speedMs <= 0.2 && throttleIn === 0) {
-            // Reverse when holding S from standstill
-            state.speedMs -= spec.accelFactor * 0.35 * dt;
-            state.speedMs = Math.max(-13, state.speedMs);
+        }
+        if (state.gear !== 'R' && state.gear !== 'N') {
+          if (brakeIn > 0.5 && state.speedMs <= 0.25 && throttleIn === 0) {
+            // Smooth reverse when holding Brake/S from standstill
+            state.speedMs -= Math.max(14, spec.accelFactor * 0.55) * dt;
+            state.speedMs = Math.max(-15, state.speedMs);
           } else {
             // Determine optimal gear 1..6 from current speed
             let autoGear = 1;
             for (let g = 1; g <= 6; g++) {
               const gMax = spec.topSpeedKmh * GEAR_SPEED_RATIOS[g];
-              if (speedAbsKmh > gMax * 0.82 && g < 6) {
+              if (speedAbsKmh > gMax * 0.84 && g < 6) {
                 autoGear = g + 1;
               }
             }
             state.gear = String(autoGear) as GearLabel;
           }
         }
+      } else {
+        // Mechanical (MT) friendly assist: auto-upshift at 98% gear speed so 1st gear never blocks acceleration,
+        // and allow holding Brake from stop to reverse smoothly if needed
+        if (state.gear !== 'R' && state.gear !== 'N') {
+          if (brakeIn > 0.5 && state.speedMs <= 0.2 && throttleIn === 0) {
+            state.speedMs -= Math.max(12, spec.accelFactor * 0.48) * dt;
+            state.speedMs = Math.max(-14, state.speedMs);
+          } else {
+            const gNumCur = Number(state.gear) || 1;
+            const curGearMaxKmh = spec.topSpeedKmh * (GEAR_SPEED_RATIOS[gNumCur] || 1);
+            if (throttleIn > 0.1 && speedAbsKmh >= curGearMaxKmh * 0.97 && gNumCur < 6) {
+              state.gear = String(gNumCur + 1) as GearLabel;
+            } else if (speedAbsKmh < 8 && gNumCur > 2 && throttleIn > 0.1) {
+              state.gear = '1';
+            }
+          }
+        }
       }
 
-      // Compute Engine RPM & Drive Force
+      // Compute Engine RPM & Brisk Drive Force
       let driveAccel = 0;
       if (state.gear === 'N') {
         const targetRpm = spec.idleRpm + throttleIn * (spec.redlineRpm - spec.idleRpm) * 0.92;
-        state.rpm = THREE.MathUtils.damp(state.rpm, targetRpm, 8, dt);
+        state.rpm = THREE.MathUtils.damp(state.rpm, targetRpm, 9, dt);
       } else if (state.gear === 'R') {
-        const revMaxMs = 15; // 54 km/h max in reverse
+        const revMaxMs = 16; // ~58 km/h max in reverse
         const gearRatioFrac = Math.min(1.05, Math.abs(state.speedMs) / revMaxMs);
         const targetRpm = Math.max(
           spec.idleRpm,
@@ -1176,36 +1314,41 @@ export const ThreeDrivingSimulator: React.FC<ThreeDrivingSimulatorProps> = ({
         );
         state.rpm = THREE.MathUtils.damp(state.rpm, targetRpm + throttleIn * 450, 10, dt);
         if (throttleIn > 0 && Math.abs(state.speedMs) < revMaxMs) {
-          driveAccel = -throttleIn * spec.accelFactor * 0.62;
+          driveAccel = -throttleIn * Math.max(16, spec.accelFactor * 0.78);
         }
         if (brakeIn > 0 && state.speedMs < 0) {
-          state.speedMs = Math.min(0, state.speedMs + brakeIn * 32 * dt);
+          state.speedMs = Math.min(0, state.speedMs + brakeIn * 36 * dt);
         }
       } else {
-        // Forward gear 1..6
+        // Forward gear 1..6 with responsive launch and smooth top-end pull
         const gNum = Number(state.gear) || 1;
-        const gearMaxKmh = spec.topSpeedKmh * (GEAR_SPEED_RATIOS[gNum] || 1);
+        const effectiveTopKmh = Math.max(85, spec.topSpeedKmh);
+        const gearMaxKmh = effectiveTopKmh * (GEAR_SPEED_RATIOS[gNum] || 1);
         const gearMaxMs = gearMaxKmh / 3.6;
         const speedFrac = Math.max(0, state.speedMs / Math.max(4, gearMaxMs));
-        const coupledRpm = spec.idleRpm + speedFrac * (spec.redlineRpm - spec.idleRpm);
+        const coupledRpm = spec.idleRpm + Math.min(1, speedFrac) * (spec.redlineRpm - spec.idleRpm);
         state.rpm = THREE.MathUtils.damp(
           state.rpm,
-          Math.min(spec.redlineRpm * 1.02, coupledRpm + throttleIn * 380),
-          11,
+          Math.min(spec.redlineRpm * 1.02, coupledRpm + throttleIn * 420),
+          12,
           dt,
         );
 
-        // Mechanical torque curve (bogs if too low RPM in high gear, cuts at redline!)
         const bogFactor =
-          transmission === 'MT' && gNum >= 3 && speedFrac < 0.22 ? 0.42 : 1.0;
-        const limiterFactor = speedFrac >= 1.0 ? 0.0 : 1.0;
-        const nitroBoost = nitroActive ? 1.42 : 1.0;
+          transmission === 'MT' && gNum >= 4 && speedFrac < 0.18 ? 0.72 : 1.0;
+        const topCapMs = (effectiveTopKmh * (nitroActive ? 1.18 : 1.0)) / 3.6;
+        const limiterFactor = state.speedMs >= topCapMs ? 0.0 : speedFrac >= 1.03 ? 0.25 : 1.0;
+        const nitroBoost = nitroActive ? 1.55 : 1.0;
+        const baseAccel = Math.max(22, spec.accelFactor * 0.92);
 
-        if (throttleIn > 0 && state.speedMs >= -0.5) {
+        if (throttleIn > 0) {
+          if (state.speedMs < 0) {
+            // Quickly transition from rolling backward into forward acceleration
+            state.speedMs = Math.min(0, state.speedMs + throttleIn * 38 * dt);
+          }
           driveAccel =
             throttleIn *
-            spec.accelFactor *
-            0.52 *
+            baseAccel *
             (GEAR_TORQUE_MULT[gNum] || 1) *
             bogFactor *
             limiterFactor *
@@ -1213,30 +1356,35 @@ export const ThreeDrivingSimulator: React.FC<ThreeDrivingSimulatorProps> = ({
         }
       }
 
-      // Apply drive acceleration, braking, and rolling/air drag
+      // Apply drive acceleration, braking, and light natural rolling drag
       state.speedMs += driveAccel * dt;
 
       if (brakeIn > 0 && state.speedMs > 0) {
-        state.speedMs = Math.max(0, state.speedMs - brakeIn * 34 * dt);
-      } else if (brakeIn > 0 && transmission === 'MT' && state.speedMs < 0) {
-        state.speedMs = Math.min(0, state.speedMs + brakeIn * 28 * dt);
+        state.speedMs = Math.max(0, state.speedMs - brakeIn * 38 * dt);
+      } else if (brakeIn > 0 && transmission === 'MT' && state.speedMs < 0 && throttleIn > 0) {
+        state.speedMs = Math.min(0, state.speedMs + brakeIn * 32 * dt);
       }
 
-      // Rolling & aerodynamic drag
-      const drag = 0.48 + Math.abs(state.speedMs) * 0.018;
+      // Low rolling & aerodynamic drag so vehicle glides and accelerates effortlessly
+      const drag = 0.26 + Math.abs(state.speedMs) * 0.012;
       if (Math.abs(throttleIn) < 0.05) {
-        if (state.speedMs > 0) state.speedMs = Math.max(0, state.speedMs - drag * 5.2 * dt);
-        else if (state.speedMs < 0) state.speedMs = Math.min(0, state.speedMs + drag * 5.2 * dt);
+        if (state.speedMs > 0) state.speedMs = Math.max(0, state.speedMs - drag * 3.1 * dt);
+        else if (state.speedMs < 0 && brakeIn < 0.05) {
+          state.speedMs = Math.min(0, state.speedMs + drag * 3.1 * dt);
+        }
       } else {
-        state.speedMs -= state.speedMs * 0.14 * dt;
+        state.speedMs -= state.speedMs * 0.045 * dt;
       }
 
-      // Ackermann-inspired steering rate proportional to velocity
-      const speedFactor = Math.min(1, Math.abs(state.speedMs) / 6.5);
-      const highSpeedDampen = 1 / (1 + Math.abs(state.speedMs) * 0.022);
+      // Responsive Ackermann-inspired steering (allows crisp low-speed turning too)
+      const speedFactor =
+        Math.abs(state.speedMs) > 0.15
+          ? Math.max(0.38, Math.min(1, Math.abs(state.speedMs) / 4.2))
+          : 0;
+      const highSpeedDampen = 1 / (1 + Math.abs(state.speedMs) * 0.018);
       const directionSign = state.speedMs >= -0.1 ? 1 : -1;
       state.heading +=
-        state.steerNorm * 2.35 * spec.handlingGrip * speedFactor * highSpeedDampen * directionSign * dt;
+        state.steerNorm * 2.55 * spec.handlingGrip * speedFactor * highSpeedDampen * directionSign * dt;
 
       // Forward vector in Three.js (-sin(h), 0, -cos(h))
       const fx = -Math.sin(state.heading);
@@ -1281,7 +1429,7 @@ export const ThreeDrivingSimulator: React.FC<ThreeDrivingSimulatorProps> = ({
     function afterDraw(cb: () => void) {
       const gl = renderer.getContext() as WebGL2RenderingContext;
       if (!gl || typeof gl.fenceSync !== 'function') {
-        frameId = window.setTimeout(cb, 80);
+        frameId = window.setTimeout(cb, 32);
         return;
       }
       const sync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
@@ -1290,19 +1438,20 @@ export const ThreeDrivingSimulator: React.FC<ThreeDrivingSimulatorProps> = ({
         if (unmounted) return;
         const state = sync && gl.getSyncParameter(sync, gl.SYNC_STATUS);
         if (state === gl.UNSIGNALED) {
-          frameId = window.setTimeout(poll, 5);
+          frameId = window.setTimeout(poll, 4);
         } else {
           if (sync) gl.deleteSync(sync);
-          frameId = window.setTimeout(cb, 80);
+          frameId = window.setTimeout(cb, 28);
         }
       };
-      frameId = window.setTimeout(poll, 5);
+      frameId = window.setTimeout(poll, 4);
     }
 
     function tick() {
       if (unmounted) return;
       const now = performance.now();
-      const dt = Math.min(0.05, Math.max(0.001, (now - prevTime) / 1000));
+      // Preserve real elapsed frame time (up to 0.20s) with fixed physics sub-stepping so vehicles NEVER run in slow-motion
+      const dt = Math.min(0.2, Math.max(0.001, (now - prevTime) / 1000));
       prevTime = now;
 
       const props = latestPropsRef.current;
@@ -1334,30 +1483,48 @@ export const ThreeDrivingSimulator: React.FC<ThreeDrivingSimulatorProps> = ({
         const nitroWanted = vIn.nitro || keys.has('ShiftLeft') || keys.has('Space');
         const nitroActive = nitroWanted && p1.nitroPct > 2 && p1Throttle > 0;
         if (nitroActive) {
-          p1.nitroPct = Math.max(0, p1.nitroPct - 26 * dt);
+          p1.nitroPct = Math.max(0, p1.nitroPct - 24 * dt);
         } else {
-          p1.nitroPct = Math.min(100, p1.nitroPct + 9 * dt);
+          p1.nitroPct = Math.min(100, p1.nitroPct + 11 * dt);
         }
 
-        stepDriverPhysics(
-          p1,
-          p1Spec,
-          props.p1Transmission,
-          p1Throttle,
-          p1Brake,
-          p1SteerTarget,
-          nitroActive,
-          dt,
-        );
+        // Sub-step vehicle physics so handling & acceleration are 100% consistent at any framerate
+        const subSteps = Math.max(1, Math.ceil(dt / 0.025));
+        const subDt = dt / subSteps;
+        for (let s = 0; s < subSteps; s++) {
+          stepDriverPhysics(
+            p1,
+            p1Spec,
+            props.p1Transmission,
+            p1Throttle,
+            p1Brake,
+            p1SteerTarget,
+            nitroActive,
+            subDt,
+          );
+        }
 
         p1.lapTimeSec += dt;
         const speedKmh = Math.abs(p1.speedMs) * 3.6;
         if (speedKmh > p1.topSpeedKmh) p1.topSpeedKmh = speedKmh;
 
+        // 4-Minute Add Time Race Countdown & Manual Celebration Trigger
+        if (props.driveMode === 'RACE_4MIN' && !p1.allWinAwarded) {
+          p1.raceRemainingSec = Math.max(0, p1.raceRemainingSec - dt);
+          if (props.celebrateAllWinSeq !== prevCelebrateSeqRef.current) {
+            prevCelebrateSeqRef.current = props.celebrateAllWinSeq;
+            buildAndEmitAllWinSummary();
+          } else if (p1.raceRemainingSec <= 0) {
+            buildAndEmitAllWinSummary();
+          }
+        } else if (props.celebrateAllWinSeq !== prevCelebrateSeqRef.current) {
+          prevCelebrateSeqRef.current = props.celebrateAllWinSeq;
+        }
+
         // Update Web Audio Engine Tone
         soundEngine.updateEngine(p1.rpm, p1Throttle, p1Spec, true);
 
-        // Checkpoint Ceremony Detection (Child Medals/Trophies & Final Super Gold Trophy with Diamonds by Las Madres de San Lolek)
+        // Checkpoint Ceremony Detection + Add Time (+15s) & Collective All-Win Medals in RACE_4MIN
         if (metaStages.length > 0 && !p1.finished) {
           syncMetaStageToCheckpoint(p1.checkpointIdx);
           const animTime = now * 0.001;
@@ -1368,13 +1535,19 @@ export const ThreeDrivingSimulator: React.FC<ThreeDrivingSimulatorProps> = ({
           const activeEntry = metaStages[p1.checkpointIdx % metaStages.length];
           const cp = activeEntry.cp;
           const distSq = (p1.x - cp.x) * (p1.x - cp.x) + (p1.z - cp.z) * (p1.z - cp.z);
-          if (distSq < 10.2 * 10.2) {
+          if (distSq < 10.6 * 10.6) {
             const plan = activeEntry.plan;
 
             if (plan.isGrandFinale) {
               soundEngine.playGrandTrophyFanfare();
             } else {
               soundEngine.playCheckpointChime();
+            }
+
+            // In 4-Minute Add Time Race Mode, every checkpoint adds +15s bonus time!
+            if (props.driveMode === 'RACE_4MIN') {
+              p1.raceRemainingSec = Math.min(360, p1.raceRemainingSec + 15);
+              p1.addTimeBonusSec += 15;
             }
 
             if (props.onAwardDelivered) {
@@ -1398,10 +1571,19 @@ export const ThreeDrivingSimulator: React.FC<ThreeDrivingSimulatorProps> = ({
             p1.checkpointsCollected += 1;
             p1.checkpointIdx = (p1.checkpointIdx + 1) % metaStages.length;
             syncMetaStageToCheckpoint(p1.checkpointIdx);
+
+            // If P1 completes all checkpoints in 4-Minute Race Mode, automatically award medals to ALL participants!
+            if (
+              props.driveMode === 'RACE_4MIN' &&
+              p1.checkpointsCollected >= metaStages.length &&
+              !p1.allWinAwarded
+            ) {
+              buildAndEmitAllWinSummary();
+            }
           }
         }
 
-        // Player 2 Physics in Split-Screen 2P Mode (Arrow Keys + RightShift)
+        // Player 2 Physics & Checkpoint Detection in Split-Screen 2P Mode (Arrow Keys + RightShift)
         if (props.sessionMode === 'SPLIT_2P') {
           p2Rig.group.visible = true;
           const p2Throttle = keys.has('ArrowUp') ? 1 : 0;
@@ -1412,11 +1594,25 @@ export const ThreeDrivingSimulator: React.FC<ThreeDrivingSimulatorProps> = ({
           const p2Nitro = keys.has('ShiftRight') || keys.has('Slash');
 
           stepDriverPhysics(p2, p2Spec, 'AT', p2Throttle, p2Brake, p2Steer, p2Nitro, dt);
+
+          if (metaStages.length > 0) {
+            const p2Target = metaStages[p2.checkpointIdx % metaStages.length].cp;
+            const p2DistSq = (p2.x - p2Target.x) ** 2 + (p2.z - p2Target.z) ** 2;
+            if (p2DistSq < 10.6 * 10.6) {
+              soundEngine.playCheckpointChime();
+              p2.checkpointsCollected += 1;
+              p2.checkpointIdx = (p2.checkpointIdx + 1) % metaStages.length;
+              if (props.driveMode === 'RACE_4MIN') {
+                p1.raceRemainingSec = Math.min(360, p1.raceRemainingSec + 10);
+                p1.addTimeBonusSec += 10;
+              }
+            }
+          }
         } else {
           p2Rig.group.visible = false;
         }
 
-        // Step Live Street Traffic (Tuk Tuks, Bicicletas, Camiones & Cars)
+        // Step Live Street Traffic & Companion Race Participants
         for (const agent of aiTraffic) {
           if (agent.path.length < 2) continue;
           const a = agent.path[agent.segIndex];
@@ -1426,6 +1622,9 @@ export const ThreeDrivingSimulator: React.FC<ThreeDrivingSimulatorProps> = ({
           if (agent.t >= 1) {
             agent.t = 0;
             agent.segIndex = (agent.segIndex + 1) % (agent.path.length - 1);
+            if (agent.isRaceParticipant) {
+              agent.checkpointsPassed = (agent.checkpointsPassed || 1) + 1;
+            }
           }
           const a2 = agent.path[agent.segIndex];
           const b2 = agent.path[agent.segIndex + 1];
@@ -1470,8 +1669,10 @@ export const ThreeDrivingSimulator: React.FC<ThreeDrivingSimulatorProps> = ({
           ped.walkPhase += ped.speed * dt * 4.8;
           ped.actor.updateWalk(ped.walkPhase);
         }
-        // Animate Sky Pajaritos
-        wildlifeHandle.update(now * 0.001, dt);
+        // Animate Sky Pajaritos + Moving Water Waves & Volcano Plumes
+        const animSec = now * 0.001;
+        wildlifeHandle.update(animSec, dt);
+        scenicWorld?.update(animSec, dt);
 
         // Gentle Ambient Songbird ("Pajaritos") Melodies
         birdSongTimer += dt;
@@ -1483,6 +1684,7 @@ export const ThreeDrivingSimulator: React.FC<ThreeDrivingSimulatorProps> = ({
       } else {
         const animTime = now * 0.001;
         wildlifeHandle.update(animTime, dt);
+        scenicWorld?.update(animTime, dt);
         for (let mIdx = 0; mIdx < metaStages.length; mIdx++) {
           metaStages[mIdx].stage.updateAnimation(animTime + mIdx * 0.7);
         }
@@ -1499,6 +1701,9 @@ export const ThreeDrivingSimulator: React.FC<ThreeDrivingSimulatorProps> = ({
       p1Rig.frontLeftPivot.rotation.y = p1.steerNorm * 0.52;
       p1Rig.frontRightPivot.rotation.y = p1.steerNorm * 0.52;
       p1Rig.cockpitWheel.rotation.z = p1.steerNorm * 3.2;
+      if (p1LabelSprite) {
+        p1LabelSprite.visible = props.cameraMode !== 'COCKPIT';
+      }
       p1Rig.wheelMeshes.forEach((wm) => {
         wm.rotation.x -= p1.speedMs * dt * 2.8;
       });
@@ -1513,7 +1718,16 @@ export const ThreeDrivingSimulator: React.FC<ThreeDrivingSimulatorProps> = ({
       p1Rig.brakeLights.emissiveIntensity =
         keys.has('KeyS') || virtualInputRef.current.brake ? 2.6 : 0.7;
 
-      // Sync Player 2 Visual Mesh
+      // Update 3D Overhead Route Guidance Arrows toward Active Meta ("todos puedan guiarse para llegar a la meta")
+      const activeP1Cp =
+        metaStages.length > 0 ? metaStages[p1.checkpointIdx % metaStages.length].cp : null;
+      if (activeP1Cp && props.driveMode === 'RACE_4MIN' && props.cameraMode !== 'COCKPIT') {
+        p1GuideArrow.update(p1.x, p1.z, activeP1Cp.x, activeP1Cp.z, now * 0.001, true);
+      } else {
+        p1GuideArrow.update(p1.x, p1.z, p1.x, p1.z, now * 0.001, false);
+      }
+
+      // Sync Player 2 Visual Mesh & 3D Route Guidance Arrow
       if (props.sessionMode === 'SPLIT_2P') {
         p2Rig.group.position.set(p2.x, 0.05, p2.z);
         p2Rig.group.rotation.y = p2.heading;
@@ -1530,9 +1744,18 @@ export const ThreeDrivingSimulator: React.FC<ThreeDrivingSimulatorProps> = ({
           p2Rig.cyclistLegs.right.rotation.x =
             Math.abs(p2.speedMs) > 0.25 ? -0.35 - Math.sin(p2Phase) * 0.44 : -0.45;
         }
+        const activeP2Cp =
+          metaStages.length > 0 ? metaStages[p2.checkpointIdx % metaStages.length].cp : null;
+        if (activeP2Cp && props.driveMode === 'RACE_4MIN') {
+          p2GuideArrow.update(p2.x, p2.z, activeP2Cp.x, activeP2Cp.z, now * 0.001 + 0.5, true);
+        } else {
+          p2GuideArrow.update(p2.x, p2.z, p2.x, p2.z, now * 0.001, false);
+        }
+      } else {
+        p2GuideArrow.update(p2.x, p2.z, p2.x, p2.z, now * 0.001, false);
       }
 
-      // Reconcile & Smoothly Interpolate Online Multiplayer Peers
+      // Reconcile & Smoothly Interpolate Online Multiplayer Peers (Chosen Alias + Chosen Transport Overhead!)
       const activePeers = remotePlayersRef.current;
       for (const [peerId, peer] of activePeers.entries()) {
         let entry = remoteRigs.get(peerId);
@@ -1540,7 +1763,8 @@ export const ThreeDrivingSimulator: React.FC<ThreeDrivingSimulatorProps> = ({
           !entry ||
           entry.carId !== peer.carId ||
           entry.alias !== peer.alias ||
-          entry.paintHex !== peer.paintHex
+          entry.paintHex !== peer.paintHex ||
+          entry.valueMessage !== peer.valueMessage
         ) {
           if (entry) {
             scene.remove(entry.rig.group);
@@ -1552,12 +1776,19 @@ export const ThreeDrivingSimulator: React.FC<ThreeDrivingSimulatorProps> = ({
             peer.paintHex || peerSpec.defaultPaint,
             texPack.contactShadow,
             isSoftwareGl,
-            peer.alias,
+            peer.alias || 'Piloto en Línea',
+            peer.valueMessage || peerSpec.valueMessage,
           );
           rig.group.position.set(peer.x, 0.05, peer.z);
           rig.group.rotation.y = peer.heading;
           scene.add(rig.group);
-          entry = { rig, carId: peer.carId, alias: peer.alias, paintHex: peer.paintHex };
+          entry = {
+            rig,
+            carId: peer.carId,
+            alias: peer.alias,
+            paintHex: peer.paintHex,
+            valueMessage: peer.valueMessage,
+          };
           remoteRigs.set(peerId, entry);
         }
 
@@ -1588,22 +1819,27 @@ export const ThreeDrivingSimulator: React.FC<ThreeDrivingSimulatorProps> = ({
         }
       }
 
-      // Camera 1 Choreography (Cockpit 1st-Person Simulator, Chase 3rd-Person, Aerial + Smooth Orbital Satellite Descent)
+      // Camera 1 Choreography (Rock-Steady Follow Distance & Fixed FOV — Zero Zoom Oscillation!)
       const sinH = Math.sin(p1.heading);
       const cosH = Math.cos(p1.heading);
       const descentSec = (now - descentStartTimeRef.current) / 1000;
-      const isDescendingFromSky = props.sessionMode !== 'SPLIT_2P' && descentSec < 2.2;
+      const isDescendingFromSky = props.sessionMode !== 'SPLIT_2P' && descentSec < 1.35;
 
+      let targetFov = 60;
       if (props.cameraMode === 'COCKPIT') {
-        // Real 1st-person seat tailored to Car, Pickup 4x4, Tuk Tuk, Bicicleta or Heavy Camión
-        const lateralSeat =
-          p1Spec.bodyStyle === 'tuk_tuk' || p1Spec.bodyStyle === 'bicycle'
-            ? 0
-            : p1Spec.bodyStyle === 'heavy_truck'
-              ? -0.58
-              : p1Spec.bodyStyle === 'pickup_truck'
-                ? -0.38
-                : -0.34;
+        // Real 1st-person seat tailored to Car, Electric Quad/Trike, Pickup 4x4, Tuk Tuk, Bicicleta or Heavy Camión
+        const isCenterRider =
+          p1Spec.bodyStyle === 'tuk_tuk' ||
+          p1Spec.bodyStyle === 'bicycle' ||
+          p1Spec.bodyStyle === 'electric_quad_trike' ||
+          p1Spec.bodyStyle === 'electric_tricycle';
+        const lateralSeat = isCenterRider
+          ? 0
+          : p1Spec.bodyStyle === 'heavy_truck'
+            ? -0.58
+            : p1Spec.bodyStyle === 'pickup_truck'
+              ? -0.38
+              : -0.34;
         const eyeHeight =
           p1Spec.bodyStyle === 'heavy_truck'
             ? 2.24
@@ -1611,54 +1847,64 @@ export const ThreeDrivingSimulator: React.FC<ThreeDrivingSimulatorProps> = ({
               ? 1.52
               : p1Spec.bodyStyle === 'bicycle'
                 ? 1.54
-                : p1Spec.bodyStyle === 'tuk_tuk'
-                  ? 1.38
+                : p1Spec.bodyStyle === 'electric_quad_trike' ||
+                    p1Spec.bodyStyle === 'electric_tricycle' ||
+                    p1Spec.bodyStyle === 'tuk_tuk'
+                  ? 1.4
                   : 1.16;
         const forwardEye =
           p1Spec.bodyStyle === 'heavy_truck'
             ? 1.85
             : p1Spec.bodyStyle === 'pickup_truck'
               ? 0.65
-              : p1Spec.bodyStyle === 'tuk_tuk'
-                ? 0.35
-                : 0.05;
+              : p1Spec.bodyStyle === 'tuk_tuk' || p1Spec.bodyStyle === 'electric_tricycle'
+                ? 0.32
+                : p1Spec.bodyStyle === 'electric_quad_trike'
+                  ? 0.16
+                  : 0.05;
         const rightX = cosH * lateralSeat;
         const rightZ = -sinH * lateralSeat;
         _camIdealPos.set(
           p1.x + rightX - sinH * forwardEye,
-          eyeHeight + cobbleVibration * 0.6,
+          eyeHeight + cobbleVibration * 0.4,
           p1.z + rightZ - cosH * forwardEye,
         );
         _camIdealLook.set(p1.x - sinH * 28, eyeHeight - 0.12, p1.z - cosH * 28);
-        cam1.fov = THREE.MathUtils.damp(cam1.fov, 68 + Math.abs(p1.speedMs) * 0.18, 6, dt);
+        targetFov = 66;
       } else if (props.cameraMode === 'AERIAL') {
         if (realMapOverlayMode) {
           _camIdealPos.set(p1.x + sinH * 0.02, 32, p1.z + cosH * 0.02);
           _camIdealLook.set(p1.x, 0, p1.z);
-          cam1.fov = THREE.MathUtils.damp(cam1.fov, 54, 8, dt);
+          targetFov = 54;
         } else {
           _camIdealPos.set(p1.x + sinH * 14, 42, p1.z + cosH * 14);
           _camIdealLook.set(p1.x - sinH * 10, 0.5, p1.z - cosH * 10);
+          targetFov = 58;
         }
       } else {
         if (realMapOverlayMode) {
-          // Synchronized 57.5° tilt matching RealGoogleMapDriveLayer lookAhead(7m)
           _camIdealPos.set(p1.x + sinH * 7.2, 8.8, p1.z + cosH * 7.2);
           _camIdealLook.set(p1.x - sinH * 7, 0.25, p1.z - cosH * 7);
-          cam1.fov = THREE.MathUtils.damp(cam1.fov, 56 + Math.abs(p1.speedMs) * 0.2, 6, dt);
+          targetFov = 58;
         } else {
-          const chaseDist = 7.4 + Math.min(2.2, Math.abs(p1.speedMs) * 0.05);
+          // Fixed chase distance (7.6m) & fixed FOV (60°) so steering or accelerating NEVER zooms the screen in and out
+          const chaseDist = 7.6;
           _camIdealPos.set(p1.x + sinH * chaseDist, 2.85, p1.z + cosH * chaseDist);
           _camIdealLook.set(p1.x - sinH * 6.5, 1.1, p1.z - cosH * 6.5);
-          cam1.fov = THREE.MathUtils.damp(cam1.fov, 60 + Math.abs(p1.speedMs) * 0.28, 6, dt);
+          targetFov = 60;
         }
       }
 
+      if (Math.abs(cam1.fov - targetFov) > 0.05) {
+        cam1.fov = targetFov;
+        cam1.updateProjectionMatrix();
+      }
+
       if (isDescendingFromSky) {
-        const t = Math.min(1, Math.max(0, descentSec / 2.2));
+        const t = Math.min(1, Math.max(0, descentSec / 1.35));
         const ease = 1 - Math.pow(1 - t, 3);
-        const skyY = realMapOverlayMode ? 115 : 145;
-        const skyBack = realMapOverlayMode ? 8 : 34;
+        const skyY = 68;
+        const skyBack = 20;
         cam1.position.set(
           THREE.MathUtils.lerp(p1.x + sinH * skyBack, _camIdealPos.x, ease),
           THREE.MathUtils.lerp(skyY, _camIdealPos.y, ease),
@@ -1669,16 +1915,16 @@ export const ThreeDrivingSimulator: React.FC<ThreeDrivingSimulatorProps> = ({
           THREE.MathUtils.lerp(0, _camIdealLook.y, ease),
           THREE.MathUtils.lerp(p1.z, _camIdealLook.z, ease),
         );
-        cam1.updateProjectionMatrix();
       } else if (props.cameraMode === 'COCKPIT' || (props.cameraMode === 'AERIAL' && realMapOverlayMode)) {
         cam1.position.copy(_camIdealPos);
         cam1.lookAt(_camIdealLook);
-        cam1.updateProjectionMatrix();
-      } else {
-        const lerpRate = realMapOverlayMode ? 12 : props.cameraMode === 'AERIAL' ? 7 : 9.5;
-        cam1.position.lerp(_camIdealPos, 1 - Math.exp(-lerpRate * dt));
+      } else if (props.cameraMode === 'AERIAL') {
+        cam1.position.lerp(_camIdealPos, 1 - Math.exp(-9 * dt));
         cam1.lookAt(_camIdealLook);
-        cam1.updateProjectionMatrix();
+      } else {
+        // Lock camera rigidly at exact 7.6m distance behind vehicle so turning never shortens chord distance (zero zoom!)
+        cam1.position.copy(_camIdealPos);
+        cam1.lookAt(_camIdealLook);
       }
 
       // Render Full Viewport OR Dual Split-Screen Viewport (2 Usuarios Local)
@@ -1740,11 +1986,24 @@ export const ThreeDrivingSimulator: React.FC<ThreeDrivingSimulatorProps> = ({
       hudTimer += dt;
       if (hudTimer >= 0.065) {
         hudTimer = 0;
-        const gps = metersToLatLon(map.centerLat, map.centerLon, p1.x, p1.z);
         const activeCp =
           map.checkpoints.length > 0
             ? map.checkpoints[p1.checkpointIdx % map.checkpoints.length]
             : null;
+        let cpDist = 0;
+        let cpRelAngle = 0;
+        if (activeCp) {
+          cpDist = Math.hypot(activeCp.x - p1.x, activeCp.z - p1.z);
+          const targetBearing = Math.atan2(-(activeCp.x - p1.x), -(activeCp.z - p1.z));
+          let diff = targetBearing - p1.heading;
+          while (diff > Math.PI) diff -= Math.PI * 2;
+          while (diff < -Math.PI) diff += Math.PI * 2;
+          cpRelAngle = diff;
+        }
+        const companionCount = aiTraffic.filter((ag) => ag.isRaceParticipant).length;
+        const onlineCount = props.sessionMode === 'ONLINE_MULTI' ? activePeers.size : 0;
+        const localDriversCount = props.sessionMode === 'SPLIT_2P' ? 2 : 1;
+
         props.onTelemetry(
           {
             speedKmh: Math.abs(p1.speedMs) * 3.6,
@@ -1762,8 +2021,8 @@ export const ThreeDrivingSimulator: React.FC<ThreeDrivingSimulatorProps> = ({
                 ? 1
                 : 0,
             streetName: findStreetName(p1.x, p1.z),
-            lat: gps.lat,
-            lon: gps.lon,
+            lat: 0,
+            lon: 0,
             x: p1.x,
             z: p1.z,
             heading: p1.heading,
@@ -1771,6 +2030,12 @@ export const ThreeDrivingSimulator: React.FC<ThreeDrivingSimulatorProps> = ({
             totalCheckpoints: map.checkpoints.length,
             lapTimeSec: p1.lapTimeSec,
             nitroPct: p1.nitroPct,
+            driveMode: props.driveMode,
+            raceRemainingSec: props.driveMode === 'RACE_4MIN' ? p1.raceRemainingSec : 240,
+            addTimeBonusSec: props.driveMode === 'RACE_4MIN' ? p1.addTimeBonusSec : 0,
+            nextCheckpointDistMeters: Math.round(cpDist),
+            nextCheckpointRelAngleRad: cpRelAngle,
+            participantCount: localDriversCount + onlineCount + companionCount,
             currentPresenterName: activeAwardPlan?.presenterName,
             currentAwardTitle: activeAwardPlan?.awardTitle,
             p2SpeedKmh: props.sessionMode === 'SPLIT_2P' ? Math.abs(p2.speedMs) * 3.6 : undefined,
@@ -1778,6 +2043,8 @@ export const ThreeDrivingSimulator: React.FC<ThreeDrivingSimulatorProps> = ({
             p2Rpm: props.sessionMode === 'SPLIT_2P' ? p2.rpm : undefined,
             p2StreetName:
               props.sessionMode === 'SPLIT_2P' ? findStreetName(p2.x, p2.z) : undefined,
+            p2CheckpointsCollected:
+              props.sessionMode === 'SPLIT_2P' ? p2.checkpointsCollected : undefined,
           },
           activeCp,
           props.sessionMode === 'SPLIT_2P' ? { x: p2.x, z: p2.z, heading: p2.heading } : null,
@@ -1805,10 +2072,13 @@ export const ThreeDrivingSimulator: React.FC<ThreeDrivingSimulatorProps> = ({
 
       p1Rig.dispose();
       p2Rig.dispose();
+      p1GuideArrow.dispose();
+      p2GuideArrow.dispose();
       metaStages.forEach((ms) => ms.stage.dispose());
       aiTraffic.forEach((a) => a.rig.dispose());
       pedestrians.forEach((p) => p.actor.dispose());
       remoteRigs.forEach((r) => r.rig.dispose());
+      scenicWorld?.dispose();
       wildlifeHandle.dispose();
       circuitInfra.dispose();
       texPack.dispose();
@@ -1838,6 +2108,7 @@ export const ThreeDrivingSimulator: React.FC<ThreeDrivingSimulatorProps> = ({
     map,
     extraRoads,
     realMapOverlayMode,
+    driveMode,
     sessionMode,
     p1CarId,
     p1Paint,
@@ -1849,11 +2120,11 @@ export const ThreeDrivingSimulator: React.FC<ThreeDrivingSimulatorProps> = ({
 
   return (
     <div
-      className={`relative w-full h-full overflow-hidden ${
+      className={`game-viewport-lock relative w-full h-full overflow-hidden ${
         realMapOverlayMode ? 'bg-transparent z-10' : 'bg-[#090d16]'
       }`}
     >
-      <div ref={mountRef} className="w-full h-full" />
+      <div ref={mountRef} className="w-full h-full touch-none" />
       {sessionMode === 'SPLIT_2P' && (
         <div
           aria-hidden="true"

@@ -1,6 +1,6 @@
 {
   "name": "Juego de 3D de Carros",
   "description": "Juego de 3D de Carros con pistas escénicas, pickups 4x4, tuk tuks, camiones y bicicletas.",
-  "requestFramePermissions": [],
+  "requestFramePermissions": ["microphone"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
