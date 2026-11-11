@@ -458,7 +458,7 @@ export const ThreeDrivingSimulator: React.FC<ThreeDrivingSimulatorProps> = ({
       } else {
         renderer.setClearColor(0x58b4f8, 1);
       }
-      renderer.setPixelRatio(isSoftwareGl ? 1 : Math.min(window.devicePixelRatio || 1, 2));
+      renderer.setPixelRatio(isSoftwareGl ? 1 : Math.min(window.devicePixelRatio || 1, 1.5));
       renderer.shadowMap.enabled = !isSoftwareGl && !realMapOverlayMode;
       renderer.shadowMap.type = THREE.PCFSoftShadowMap;
       renderer.setSize(initW, initH);
@@ -1017,7 +1017,7 @@ export const ThreeDrivingSimulator: React.FC<ThreeDrivingSimulatorProps> = ({
             p1Paint,
             texPack.contactShadow,
             isSoftwareGl,
-            sessionMode !== 'SOLO' || driveMode === 'RACE_4MIN' ? p1Alias || 'Piloto 1' : undefined,
+            undefined, // No overhead billboard tag right in front of local player camera
             p1Spec.valueMessage,
           )
         : null;
@@ -2181,10 +2181,12 @@ export const ThreeDrivingSimulator: React.FC<ThreeDrivingSimulatorProps> = ({
           _camIdealLook.set(p1.x - sinH * 7, 0.25, p1.z - cosH * 7);
           targetFov = 58;
         } else {
-          const chaseDist = 7.6;
-          _camIdealPos.set(p1.x + sinH * chaseDist, 2.85, p1.z + cosH * chaseDist);
-          _camIdealLook.set(p1.x - sinH * 6.5, 1.1, p1.z - cosH * 6.5);
-          targetFov = 60;
+          // Low, ground-level chase camera for exhilarating asphalt speed sensation
+          const chaseDist = 5.6;
+          _camIdealPos.set(p1.x + sinH * chaseDist, 1.72, p1.z + cosH * chaseDist);
+          _camIdealLook.set(p1.x - sinH * 7.5, 0.92, p1.z - cosH * 7.5);
+          const speedRatio = Math.min(1, Math.abs(p1.speedMs) / 38);
+          targetFov = 62 + speedRatio * 15; // Dynamic FOV: stretches from 62° to 77° at top speed
         }
       }
 
@@ -2223,47 +2225,19 @@ export const ThreeDrivingSimulator: React.FC<ThreeDrivingSimulatorProps> = ({
         cam1.lookAt(_cam1LookActual);
       }
 
-      // Render Full Viewport OR Dual Split-Screen Viewport (WebGL2 if available, else Built-in 3D Perspective Canvas Engine!)
+      // Enforce Single Full-Screen Viewport (Zero split-screen division across the viewport)
       const cw = Math.max(2, container?.clientWidth || window.innerWidth || 1280);
       const ch = Math.max(2, container?.clientHeight || window.innerHeight || 720);
 
       if (renderer && scene && !contextLost) {
         try {
-          if (props.sessionMode === 'SPLIT_2P') {
-            const halfW = Math.max(1, Math.floor(cw / 2));
-            renderer.setScissorTest(true);
-
-            // Left Viewport: Player 1
-            cam1.aspect = halfW / ch;
+          renderer.setScissorTest(false);
+          if (Math.abs(cam1.aspect - cw / ch) > 0.01) {
+            cam1.aspect = cw / ch;
             cam1.updateProjectionMatrix();
-            renderer.setViewport(0, 0, Math.max(1, halfW - 1), ch);
-            renderer.setScissor(0, 0, Math.max(1, halfW - 1), ch);
-            renderer.render(scene, cam1);
-
-            // Right Viewport: Player 2
-            const sinH2 = Math.sin(p2.heading);
-            const cosH2 = Math.cos(p2.heading);
-            _p2CamIdealPos.set(p2.x + sinH2 * 7.6, 2.9, p2.z + cosH2 * 7.6);
-            cam2.position.lerp(_p2CamIdealPos, 1 - Math.exp(-9.5 * dt));
-            _p2CamIdealLook.set(p2.x - sinH2 * 6.5, 1.1, p2.z - cosH2 * 6.5);
-            cam2.lookAt(_p2CamIdealLook);
-            cam2.aspect = Math.max(1, cw - halfW) / ch;
-            cam2.updateProjectionMatrix();
-
-            renderer.setViewport(halfW + 1, 0, Math.max(1, cw - halfW - 1), ch);
-            renderer.setScissor(halfW + 1, 0, Math.max(1, cw - halfW - 1), ch);
-            renderer.render(scene, cam2);
-
-            renderer.setScissorTest(false);
-          } else {
-            renderer.setScissorTest(false);
-            if (Math.abs(cam1.aspect - cw / ch) > 0.01) {
-              cam1.aspect = cw / ch;
-              cam1.updateProjectionMatrix();
-            }
-            renderer.setViewport(0, 0, cw, ch);
-            renderer.render(scene, cam1);
           }
+          renderer.setViewport(0, 0, cw, ch);
+          renderer.render(scene, cam1);
         } catch {
           renderer.setScissorTest(false);
           contextLost = true;
@@ -2295,10 +2269,7 @@ export const ThreeDrivingSimulator: React.FC<ThreeDrivingSimulatorProps> = ({
               speedMs: p1.speedMs,
               spec: p1Spec,
               paintHex: p1Paint,
-              alias:
-                props.sessionMode !== 'SOLO' || props.driveMode === 'RACE_4MIN'
-                  ? props.p1Alias || 'Piloto 1'
-                  : undefined,
+              alias: undefined,
               valueMessage: p1Spec.valueMessage,
               braking: p1Braking,
               hideMeshForCockpit: props.cameraMode === 'COCKPIT',
@@ -2567,11 +2538,7 @@ export const ThreeDrivingSimulator: React.FC<ThreeDrivingSimulatorProps> = ({
         );
       }
 
-      if (renderer && !contextLost && isSoftwareGl) {
-        afterDraw(tick);
-      } else {
-        frameId = requestAnimationFrame(tick);
-      }
+      frameId = requestAnimationFrame(tick);
     }
 
     frameId = requestAnimationFrame(tick);
@@ -2654,12 +2621,6 @@ export const ThreeDrivingSimulator: React.FC<ThreeDrivingSimulatorProps> = ({
       }`}
     >
       <div ref={mountRef} className="w-full h-full touch-none" />
-      {sessionMode === 'SPLIT_2P' && (
-        <div
-          aria-hidden="true"
-          className="pointer-events-none absolute inset-y-0 left-1/2 w-[2px] -translate-x-1/2 bg-amber-500/80 z-10"
-        />
-      )}
     </div>
   );
 };

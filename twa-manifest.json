@@ -1,0 +1,32 @@
+{
+  "packageId": "com.guaterutas3d.app",
+  "host": "ais-pre-2ll7lii4dwwvirhke3mxoh-894683888544.us-east1.run.app",
+  "name": "GuateRutas 3D y más allá — Juegos de 3D de Carros",
+  "launcherName": "GuateRutas 3D",
+  "themeColor": "#0ea5e9",
+  "navigationColor": "#0ea5e9",
+  "backgroundColor": "#eef8ff",
+  "enableNotifications": true,
+  "startUrl": "/",
+  "iconUrl": "https://ais-pre-2ll7lii4dwwvirhke3mxoh-894683888544.us-east1.run.app/pwa-512x512.png",
+  "maskableIconUrl": "https://ais-pre-2ll7lii4dwwvirhke3mxoh-894683888544.us-east1.run.app/pwa-maskable-512x512.png",
+  "appVersionName": "1.0.0",
+  "appVersionCode": 1,
+  "shortcuts": [],
+  "generatorApp": "bubblewrap-cli",
+  "webManifestUrl": "https://ais-pre-2ll7lii4dwwvirhke3mxoh-894683888544.us-east1.run.app/manifest.webmanifest",
+  "fallbackType": "customtabs",
+  "features": {
+    "locationDelegation": {
+      "enabled": false
+    },
+    "playBilling": {
+      "enabled": false
+    }
+  },
+  "alphaDependencies": {
+    "enabled": false
+  },
+  "enableSiteSettingsShortcut": true,
+  "orientation": "sensorLandscape"
+}

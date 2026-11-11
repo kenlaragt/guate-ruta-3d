@@ -12,13 +12,16 @@ import {
   History,
   Lock,
   Map as MapIcon,
+  Download,
   Maximize2,
   Minimize2,
   Navigation,
+  Package,
   Play,
   RotateCcw,
   Settings2,
   ShieldCheck,
+  Smartphone,
   Sun,
   Timer,
   Trash2,
@@ -28,6 +31,8 @@ import {
   VolumeX,
   WifiOff,
   X,
+  Heart,
+  Languages,
 } from 'lucide-react';
 import { MinimapCanvas } from './components/MinimapCanvas';
 import { OfflineIndicator } from './components/OfflineIndicator';
@@ -39,8 +44,11 @@ import {
 } from './components/RealGoogleMapDriveLayer';
 import { SimulatorControlsRig } from './components/SimulatorControlsRig';
 import { ThreeDrivingSimulator, VirtualRigInput } from './components/ThreeDrivingSimulator';
+import { MiniVehicleFigure } from './components/MiniVehicleFigure';
+import { PlaystationSplashScreen } from './components/PlaystationSplashScreen';
 import { ValuesVideoAndVoiceStudio } from './components/ValuesVideoAndVoiceStudio';
 import { VehiclePreview3D } from './components/VehiclePreview3D';
+import { Language, TRANSLATIONS } from './i18n/translations';
 import {
   getCheckpointAwardPlan,
   GRAND_FINALE_AWARD_TITLE,
@@ -496,6 +504,45 @@ export default function App() {
   // Dynamic Youthful Sub-Menu & Official Cover Art Showcase State
   const [activeSubMenu, setActiveSubMenu] = useState<TitleSubMenuTab>('CARATULA');
   const [heroVisualTab, setHeroVisualTab] = useState<'CARATULA' | 'PISTA'>('CARATULA');
+  const [promoSlideIdx, setPromoSlideIdx] = useState<number>(0);
+  const [language, setLanguage] = useState<Language>(() => {
+    try {
+      const saved = localStorage.getItem('carros3d_language');
+      if (saved === 'en' || saved === 'es') return saved;
+    } catch {
+      // Ignore storage errors
+    }
+    return 'es';
+  });
+
+  const toggleLanguage = useCallback(() => {
+    setLanguage((prev) => {
+      const next: Language = prev === 'es' ? 'en' : 'es';
+      try {
+        localStorage.setItem('carros3d_language', next);
+      } catch {
+        // Ignore storage errors
+      }
+      return next;
+    });
+  }, []);
+
+  const t = useMemo(() => TRANSLATIONS[language], [language]);
+  const [showPlaystationSplash, setShowPlaystationSplash] = useState<boolean>(true);
+  const [showVehiclePickerModal, setShowVehiclePickerModal] = useState<boolean>(false);
+  const [showTrackPickerModal, setShowTrackPickerModal] = useState<boolean>(false);
+  const [showPilotPickerModal, setShowPilotPickerModal] = useState<boolean>(false);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [installPromptEvent, setInstallPromptEvent] = useState<any>(null);
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      e.preventDefault();
+      setInstallPromptEvent(e);
+    };
+    window.addEventListener('beforeinstallprompt', handler);
+    return () => window.removeEventListener('beforeinstallprompt', handler);
+  }, []);
 
   // Bottom Pasarela / Donation Screen State (Default 'donacion' visible; compatible with Android cambiarPantalla)
   const [activePasarelaScreen, setActivePasarelaScreen] = useState<
@@ -657,6 +704,62 @@ export default function App() {
     [selectedMapId],
   );
   const activeCar = useMemo(() => getCarById(p1CarId), [p1CarId]);
+
+  const promoSlides = useMemo(
+    () => [
+      {
+        id: 'caratula_panoramica',
+        title: 'Carátula Oficial Panorámica 3D',
+        subtitle: 'Simulador 3D de alta velocidad · Gráficos hiperrealistas estilo Gran Turismo',
+        badge: 'Carátula Oficial',
+        url: COVER_ART_PANORAMIC_URL,
+        mapId: effectiveMap.id,
+      },
+      {
+        id: 'portada_box',
+        title: 'Portada Oficial Edición de Lujo',
+        subtitle: 'Autos deportivos, monoplazas y transportes tradicionales en 3D',
+        badge: 'Edición Juvenil',
+        url: COVER_ART_BOX_URL,
+        mapId: effectiveMap.id,
+      },
+      {
+        id: 'pista_antigua',
+        title: 'Circuito 3D Calle del Arco · Antigua',
+        subtitle: 'Piedra adoquinada colonial, Volcán de Agua y curvas técnicas',
+        badge: 'Pista 3D',
+        url: WORLD_MAPS_CATALOG[0]?.adaptedPhotoUrl || COVER_ART_PANORAMIC_URL,
+        mapId: WORLD_MAPS_CATALOG[0]?.id,
+      },
+      {
+        id: 'pista_atitlan',
+        title: 'Circuito 3D Panajachel · Lago de Atitlán',
+        subtitle: 'Paisaje volcánico con reflejos de agua y curvas abiertas',
+        badge: 'Pista 3D',
+        url: WORLD_MAPS_CATALOG[1]?.adaptedPhotoUrl || COVER_ART_PANORAMIC_URL,
+        mapId: WORLD_MAPS_CATALOG[1]?.id,
+      },
+      {
+        id: 'pista_semuc',
+        title: 'Circuito 3D Selva de Alta Verapaz · Semuc Champey',
+        subtitle: 'Cañón kárstico, pozas color turquesa y desniveles de montaña',
+        badge: 'Pista 3D',
+        url: WORLD_MAPS_CATALOG[2]?.adaptedPhotoUrl || COVER_ART_PANORAMIC_URL,
+        mapId: WORLD_MAPS_CATALOG[2]?.id,
+      },
+      {
+        id: 'pista_tikal',
+        title: 'Circuito 3D Reserva Maya · Tikal Petén',
+        subtitle: 'Templo del Gran Jaguar, rectas veloces y selva tropical',
+        badge: 'Pista 3D',
+        url: WORLD_MAPS_CATALOG[3]?.adaptedPhotoUrl || COVER_ART_PANORAMIC_URL,
+        mapId: WORLD_MAPS_CATALOG[3]?.id,
+      },
+    ],
+    [effectiveMap.id],
+  );
+
+  const activePromoSlide = promoSlides[promoSlideIdx % promoSlides.length] || promoSlides[0];
 
   const activeMapCheckpointPlans = useMemo(
     () =>
@@ -1139,23 +1242,42 @@ export default function App() {
         <div className="bg-gradient-to-r from-sky-600 via-sky-500 to-cyan-500 px-6 py-4 text-white flex items-start justify-between gap-4">
           <div>
             <div className="text-xs font-bold text-amber-200 uppercase tracking-wide">
-              Iniciar Pista en {effectiveMap.country} · Patrimonio: {effectiveMap.culturalHeritageTitle}
+              {t.modalStartTrackIn} {effectiveMap.country} · {effectiveMap.culturalHeritageTitle}
             </div>
             <h2 className="font-display text-xl sm:text-2xl font-bold mt-0.5">
-              {effectiveMap.name} — Elige tu Modalidad de Recorrido
+              {effectiveMap.name} — {t.modalChooseMode}
             </h2>
           </div>
           <button
             type="button"
             onClick={() => setShowPreTrackLaunchModal(false)}
-            aria-label="Cerrar selector de modalidad"
+            aria-label="Cerrar modal"
             className="p-1.5 rounded-xl bg-white/15 hover:bg-white/25 text-white shrink-0 cursor-pointer"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
-        <div className="p-5 sm:p-6 space-y-5">
+        <div className="p-5 sm:p-6 space-y-4">
+          {/* Quick 1-Tap Vehicle Selector with figures */}
+          <div className="p-3 bg-sky-50/70 border border-sky-200 rounded-2xl space-y-2">
+            <div className="flex items-center justify-between text-xs font-bold text-slate-800">
+              <span>{t.modalChooseVehicleForTrack}</span>
+              <span className="text-[11px] font-semibold text-sky-700">{t.modalInstantSwitch}: {activeCar.name}</span>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 max-h-48 overflow-y-auto pr-1">
+              {CARS_CATALOG.map((car) => (
+                <MiniVehicleFigure
+                  key={car.id}
+                  car={car}
+                  isSelected={car.id === p1CarId}
+                  onSelect={() => handleSelectCar(car.id)}
+                  compact
+                />
+              ))}
+            </div>
+          </div>
+
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-stretch">
             {/* OPTION 1: PASEO LIBRE POR CALLES Y PAISAJES */}
             <div
@@ -1169,20 +1291,17 @@ export default function App() {
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-xs font-bold text-emerald-700 flex items-center gap-1.5">
                     <Compass className="w-4 h-4 shrink-0" />
-                    <span>Opción 1 · Sin Reloj</span>
+                    <span>{language === 'es' ? 'Opción 1 · Sin Reloj' : 'Option 1 · No Timer'}</span>
                   </span>
                   <span className="text-[11px] font-semibold text-slate-600">
-                    Paisajes 3D Reales
+                    3D
                   </span>
                 </div>
                 <h3 className="font-display text-xl font-bold text-slate-950">
-                  Pasear Libre por Calles y Paisajes
+                  {t.modalFreeRoamTitle}
                 </h3>
                 <p className="text-xs sm:text-sm text-slate-700 leading-relaxed">
-                  Recorre sin prisa todas las calles, montañas, volcanes, palmeras, flores, ríos,
-                  lagos, lagunas y mares en movimiento, junto al patrimonio monumental (
-                  <strong>{effectiveMap.culturalHeritageTitle}</strong>) y los letreros de juegos
-                  lúdicos del siglo XIX y XX.
+                  {t.modalFreeRoamDesc}
                 </p>
               </div>
 
@@ -1192,7 +1311,7 @@ export default function App() {
                 className="w-full py-3 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-sm shadow-sm transition-colors cursor-pointer flex items-center justify-center gap-2"
               >
                 <Play className="w-4 h-4 fill-white" />
-                <span>Salir a Pasear Libre →</span>
+                <span>{t.modalFreeRoamButton}</span>
               </button>
             </div>
 
@@ -1208,41 +1327,38 @@ export default function App() {
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-xs font-bold text-amber-700 flex items-center gap-1.5">
                     <Timer className="w-4 h-4 shrink-0" />
-                    <span>Opción 2 · 4:00 Min + Add Time</span>
+                    <span>{language === 'es' ? 'Opción 2 · 4:00 Min + Add Time' : 'Option 2 · 4:00 Min + Add Time'}</span>
                   </span>
                   <span className="text-[11px] font-bold text-amber-800">
-                    ¡Todos Ganan Medalla!
+                    {language === 'es' ? '¡Todos Ganan Medalla!' : 'All Drivers Win Medals!'}
                   </span>
                 </div>
                 <h3 className="font-display text-xl font-bold text-slate-950">
-                  Carrera Add Time · 4 Minutos
+                  {t.modalRaceTitle}
                 </h3>
                 <p className="text-xs sm:text-sm text-slate-700 leading-relaxed">
-                  Participan otros carros y transportes en pista, todos cuentan con{' '}
-                  <strong>flecha guía 3D hacia la meta</strong>, bonos <strong>+15s Add Time</strong>{' '}
-                  y al cierre{' '}
-                  <strong>todos reciben medallas automáticamente por participar</strong>.
+                  {t.modalRaceDesc}
                 </p>
 
                 {/* Sub-selector: Local 1P / Local 2P / Online Multiple Users */}
                 <div className="space-y-1.5 pt-1">
                   <div className="text-[11px] font-bold text-slate-800">
-                    Elige participantes para esta carrera:
+                    {language === 'es' ? 'Elige participantes para esta carrera:' : 'Choose race participants:'}
                   </div>
                   <div className="grid grid-cols-1 gap-1.5">
                     {(
                       [
                         {
                           id: 'SOLO',
-                          label: 'Local · 1 Usuario + Carros Participantes',
+                          label: language === 'es' ? 'Local · 1 Usuario + Carros Participantes' : 'Local · 1 User + AI Transports',
                         },
                         {
                           id: 'SPLIT_2P',
-                          label: 'Local · 2 Usuarios (Pantalla Dividida) + Participantes',
+                          label: language === 'es' ? 'Local · 2 Usuarios (Pantalla Dividida) + Participantes' : 'Local · 2 Users (Split Screen) + AI',
                         },
                         {
                           id: 'ONLINE_MULTI',
-                          label: 'Con Internet · Múltiples Usuarios en Línea (Nombre sobre Transporte)',
+                          label: language === 'es' ? 'Con Internet · Múltiples Usuarios en Línea' : 'Online · Multiple Remote Users',
                         },
                       ] as Array<{ id: SessionMode; label: string }>
                     ).map((sm) => (
@@ -1274,7 +1390,7 @@ export default function App() {
                 className="w-full py-3 px-4 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-sm shadow-sm transition-colors cursor-pointer flex items-center justify-center gap-2"
               >
                 <Trophy className="w-4 h-4 text-slate-950" />
-                <span>¡Iniciar Carrera 4:00 (Todos Ganan)! →</span>
+                <span>{t.modalRaceButton}</span>
               </button>
             </div>
           </div>
@@ -2279,7 +2395,7 @@ export default function App() {
           </span>
         </a>
 
-        <nav className="hidden md:flex items-center gap-6 text-sm font-semibold text-slate-700">
+        <nav className="hidden md:flex items-center gap-5 text-sm font-semibold text-slate-700">
           <button
             type="button"
             onClick={() => openSubMenuSection('CARATULA')}
@@ -2287,7 +2403,7 @@ export default function App() {
               activeSubMenu === 'CARATULA' ? 'text-sky-700 underline' : ''
             }`}
           >
-            Carátula
+            {t.navCover}
           </button>
           <button
             type="button"
@@ -2296,7 +2412,7 @@ export default function App() {
               activeSubMenu === 'PISTAS' ? 'text-sky-700 underline' : ''
             }`}
           >
-            Pistas 3D
+            {t.navTracks}
           </button>
           <button
             type="button"
@@ -2305,7 +2421,7 @@ export default function App() {
               activeSubMenu === 'GARAJE' ? 'text-sky-700 underline' : ''
             }`}
           >
-            Garaje 3D
+            {t.navGarage}
           </button>
           <button
             type="button"
@@ -2314,7 +2430,7 @@ export default function App() {
               activeSubMenu === 'VIDEOS' ? 'text-sky-700 underline' : ''
             }`}
           >
-            Videos y Vida
+            {t.navVideos}
           </button>
           <button
             type="button"
@@ -2323,7 +2439,7 @@ export default function App() {
               activeSubMenu === 'TROFEOS' ? 'text-sky-700 underline' : ''
             }`}
           >
-            Trofeos
+            {t.navTrophies}
           </button>
           <a
             href="#livsform-lykke"
@@ -2333,451 +2449,347 @@ export default function App() {
           </a>
         </nav>
 
-        <div className="flex items-center shrink-0">
+        <div className="flex items-center gap-2 shrink-0">
+          <a
+            href="/downloads/GuateRutas3D-v1.0.apk"
+            download="GuateRutas3D-v1.0.apk"
+            className="hidden sm:flex px-3 py-2 text-xs md:text-sm font-bold text-white bg-emerald-600 hover:bg-emerald-500 rounded-xl shadow-xs transition-colors whitespace-nowrap shrink-0 items-center gap-1.5"
+            title={t.downloadApk}
+          >
+            <Download className="w-4 h-4" />
+            <span>{t.downloadApk}</span>
+          </a>
+
+          {/* JUGAR AHORA / PLAY NOW BUTTON */}
           <button
             type="button"
             onClick={handleStartSimulation}
-            className="px-4 py-2 text-xs md:text-sm font-bold text-white bg-sky-600 rounded-xl hover:bg-sky-500 shadow-sm transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+            className="px-3.5 py-2 text-xs md:text-sm font-bold text-white bg-sky-600 rounded-xl hover:bg-sky-500 shadow-sm transition-colors whitespace-nowrap shrink-0 cursor-pointer"
           >
-            Jugar Ahora
+            {t.playNow}
+          </button>
+
+          {/* BOTÓN APORTA / DONATE — REDIRECCIONA AL SUBMENÚ DE DONACIONES */}
+          <button
+            type="button"
+            onClick={() => {
+              setActivePasarelaScreen('donacion');
+              const el = document.getElementById('pasarela-donacion');
+              if (el) {
+                el.scrollIntoView({ behavior: 'smooth' });
+              } else {
+                window.location.hash = '#pasarela-donacion';
+              }
+            }}
+            className="px-3 py-2 text-xs md:text-sm font-bold text-amber-950 bg-gradient-to-r from-amber-400 to-amber-300 hover:from-amber-300 hover:to-amber-200 border border-amber-500/50 rounded-xl shadow-xs transition-transform hover:scale-105 active:scale-95 whitespace-nowrap shrink-0 flex items-center gap-1.5 cursor-pointer"
+            title={t.donateTooltip}
+          >
+            <Heart className="w-4 h-4 fill-amber-500 text-amber-700 shrink-0" />
+            <span>{t.donate}</span>
+          </button>
+
+          {/* BOTÓN DE ELEGIR LENGUAJE O IDIOMA (ES / EN) */}
+          <button
+            type="button"
+            onClick={toggleLanguage}
+            className="px-2.5 py-2 text-xs md:text-sm font-bold text-slate-800 bg-white hover:bg-sky-50 border border-sky-300 rounded-xl shadow-xs transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 cursor-pointer"
+            title={language === 'es' ? 'Cambiar idioma a Inglés (Switch to English)' : 'Switch language to Spanish (Cambiar a Español)'}
+          >
+            <Languages className="w-4 h-4 text-sky-600 shrink-0" />
+            <span className="font-mono font-bold text-xs">{language === 'es' ? 'ES 🇬🇹' : 'EN 🇺🇸'}</span>
           </button>
         </div>
       </header>
 
       <main id="inicio" className="flex-1 max-w-7xl w-full mx-auto px-6 md:px-10 py-8 space-y-10">
-        {/* HERO SPLIT: Daytime Sky Youthful Setup + Official Video Game Cover Art */}
-        <section className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-stretch">
-          <div className="lg:col-span-6 flex flex-col justify-between space-y-5">
-            <div className="space-y-3">
-              <div className="flex flex-wrap items-center gap-2 text-xs font-semibold text-sky-800">
-                <Sun className="w-4 h-4 text-amber-500 shrink-0" />
-                <span>Paisajes 3D estilo Carátula</span>
-                <span aria-hidden="true">·</span>
-                <span>Paseo Libre o Carrera 4:00 Add Time</span>
-                <span aria-hidden="true">·</span>
-                <span>Avatares 3D y Patrimonio Cultural</span>
+        {/* HERO SECTION: GT3 Emblem Title Plaque + Large Gran Turismo Promotional Showcase */}
+        <section className="space-y-6">
+          {/* GRAN TURISMO 3: A-SPEC INSPIRED EMBLEM PLAQUE */}
+          <div className="relative overflow-hidden rounded-2xl border border-white/85 bg-gradient-to-br from-[#0d4792] via-[#1c74d8] to-[#5ec0fa] px-6 py-4 sm:px-8 sm:py-5 shadow-[0_14px_30px_rgba(12,56,118,0.22)]">
+            {/* Natural Sky Specular Horizon Reflection */}
+            <div
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-x-0 top-0 h-1/2 bg-gradient-to-b from-sky-200/35 via-white/10 to-transparent"
+            />
+            {/* Iconic Diagonal Crimson-Red Automotive Taillight Corner ("una esquina roja") */}
+            <div
+              aria-hidden="true"
+              className="pointer-events-none absolute -right-8 -top-6 -bottom-6 w-28 sm:w-36 -skew-x-[18deg] bg-gradient-to-b from-[#ff3b4e] via-[#dc2626] to-[#7f1d1d] border-l-2 border-rose-200/75 shadow-[-10px_0_24px_rgba(127,29,29,0.45)]"
+            />
+            <div
+              aria-hidden="true"
+              className="pointer-events-none absolute right-2 top-3 bottom-3 w-3 -skew-x-[18deg] rounded-full bg-gradient-to-b from-amber-200/70 via-rose-300/45 to-transparent"
+            />
+
+            <div className="relative z-10 pr-12 sm:pr-24 space-y-1.5">
+              <h1 className="font-display italic text-3xl sm:text-4xl lg:text-[2.75rem] font-bold tracking-wider leading-[1.04] text-balance drop-shadow-[0_3px_0_rgba(5,20,54,0.92)]">
+                <span className="bg-gradient-to-b from-[#ffffff] via-[#e2e8f0] to-[#94a3b8] bg-clip-text text-transparent">
+                  GuateRutas{' '}
+                </span>
+                <span className="inline-block text-[1.14em] bg-gradient-to-b from-[#ffffff] via-[#f1f5f9] to-[#7dd3fc] bg-clip-text text-transparent">
+                  3D{' '}
+                </span>
+                <span className="bg-gradient-to-b from-[#f8fafc] via-[#dbeafe] to-[#93c5fd] bg-clip-text text-transparent">
+                  y más allá
+                </span>
+              </h1>
+
+              {/* GT3 Chrome & Crimson Taillight Horizon Rule */}
+              <div className="flex items-center gap-2 pt-0.5" aria-hidden="true">
+                <div className="h-[3px] w-24 sm:w-36 rounded-full bg-gradient-to-r from-white via-sky-200 to-sky-400/70 -skew-x-[18deg] shadow-sm" />
+                <div className="h-[3px] w-14 rounded-full bg-gradient-to-r from-[#ff4d5e] to-[#dc2626] -skew-x-[18deg] shadow-sm" />
               </div>
 
-              {/* GRAN TURISMO 3: A-SPEC INSPIRED EMBLEM PLAQUE: Natural Sky-to-Cobalt Metallic Body + Red Taillight Corner + Sculpted Silver-Chrome Typography */}
-              <div className="relative overflow-hidden rounded-2xl border border-white/85 bg-gradient-to-br from-[#0d4792] via-[#1c74d8] to-[#5ec0fa] px-5 py-4 sm:px-6 sm:py-5 shadow-[0_14px_30px_rgba(12,56,118,0.22)]">
-                {/* Natural Sky Specular Horizon Reflection */}
-                <div
-                  aria-hidden="true"
-                  className="pointer-events-none absolute inset-x-0 top-0 h-1/2 bg-gradient-to-b from-sky-200/35 via-white/10 to-transparent"
-                />
-                {/* Iconic Diagonal Crimson-Red Automotive Taillight Corner ("una esquina roja") */}
-                <div
-                  aria-hidden="true"
-                  className="pointer-events-none absolute -right-8 -top-6 -bottom-6 w-28 sm:w-36 -skew-x-[18deg] bg-gradient-to-b from-[#ff3b4e] via-[#dc2626] to-[#7f1d1d] border-l-2 border-rose-200/75 shadow-[-10px_0_24px_rgba(127,29,29,0.45)]"
-                />
-                <div
-                  aria-hidden="true"
-                  className="pointer-events-none absolute right-2 top-3 bottom-3 w-3 -skew-x-[18deg] rounded-full bg-gradient-to-b from-amber-200/70 via-rose-300/45 to-transparent"
-                />
-
-                <div className="relative z-10 pr-12 sm:pr-20 space-y-1.5">
-                  <h1 className="font-display italic text-3xl sm:text-4xl lg:text-[2.75rem] font-bold tracking-wider leading-[1.04] text-balance drop-shadow-[0_3px_0_rgba(5,20,54,0.92)]">
-                    <span className="bg-gradient-to-b from-[#ffffff] via-[#e2e8f0] to-[#94a3b8] bg-clip-text text-transparent">
-                      GuateRutas{' '}
-                    </span>
-                    <span className="inline-block text-[1.14em] bg-gradient-to-b from-[#ffffff] via-[#f1f5f9] to-[#7dd3fc] bg-clip-text text-transparent">
-                      3D{' '}
-                    </span>
-                    <span className="bg-gradient-to-b from-[#f8fafc] via-[#dbeafe] to-[#93c5fd] bg-clip-text text-transparent">
-                      y más allá
-                    </span>
-                  </h1>
-
-                  {/* GT3 Chrome & Crimson Taillight Horizon Rule */}
-                  <div className="flex items-center gap-2 pt-0.5" aria-hidden="true">
-                    <div className="h-[3px] w-24 sm:w-32 rounded-full bg-gradient-to-r from-white via-sky-200 to-sky-400/70 -skew-x-[18deg] shadow-sm" />
-                    <div className="h-[3px] w-12 rounded-full bg-gradient-to-r from-[#ff4d5e] to-[#dc2626] -skew-x-[18deg] shadow-sm" />
-                  </div>
-
-                  {/* GT3 "A-Spec" Extended Italic Subtitle */}
-                  <p className="font-display italic text-base sm:text-xl font-bold tracking-[0.14em] bg-gradient-to-b from-[#ffffff] via-[#e0f2fe] to-[#bae6fd] bg-clip-text text-transparent drop-shadow-[0_2px_0_rgba(5,20,54,0.88)]">
-                    Juegos de 3D de Carros
-                  </p>
-                </div>
-              </div>
-
-              <p className="text-slate-700 text-base leading-relaxed max-w-xl">
-                Recorre montañas, volcanes, palmeras, flores, ríos, lagos y mares con agua en
-                movimiento junto a monumentos culturales como el{' '}
-                <strong className="text-slate-900">Cristo Redentor en Brasil</strong>. Conduce
-                carros, cuatrimotos y triciclos eléctricos con{' '}
-                <strong className="text-sky-800">avatares 3D</strong>, ya sea en{' '}
-                <strong className="text-slate-900">Local (Sin Internet)</strong> o en{' '}
-                <strong className="text-sky-800">
-                  Conexión a Internet Global + Pistas en Tiempo Real
-                </strong>
-                .
+              {/* GT3 "A-Spec" Extended Italic Subtitle */}
+              <p className="font-display italic text-base sm:text-xl font-bold tracking-[0.14em] bg-gradient-to-b from-[#ffffff] via-[#e0f2fe] to-[#bae6fd] bg-clip-text text-transparent drop-shadow-[0_2px_0_rgba(5,20,54,0.88)]">
+                Juegos de 3D de Carros
               </p>
             </div>
+          </div>
 
-            {/* Youthful Sky-Daylight Control Card: 2-Option APK Modality + Alias + Launch */}
-            <div className="bg-white/95 border border-sky-200 rounded-2xl p-5 space-y-4 shadow-md shadow-sky-900/5">
-              {/* Clean 2-Option Modality Selector: Local (Sin Internet) vs Conexión Global + Pistas en Tiempo Real */}
-              <div className="space-y-2">
-                <div className="text-xs font-bold text-slate-800 flex flex-wrap items-center justify-between gap-2">
-                  <span>Modalidad de Juego:</span>
-                  <span className="text-[11px] font-semibold text-sky-700">
-                    {connectionUsageMode === 'LOCAL_OFFLINE'
-                      ? 'Local (Sin Internet) activo'
-                      : networkIsOnline
-                        ? 'Conexión Global + Pistas en Tiempo Real activa'
-                        : 'Sin señal — circuitos locales automáticos'}
-                  </span>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                  <button
-                    type="button"
-                    onClick={handleSelectLocalOffline}
-                    className={`p-3 rounded-xl border-2 text-left transition-all cursor-pointer ${
-                      connectionUsageMode === 'LOCAL_OFFLINE'
-                        ? 'bg-amber-400 border-amber-500 text-slate-950 shadow-sm'
-                        : 'bg-sky-50/70 border-sky-200 text-slate-800 hover:bg-sky-100/80'
-                    }`}
-                  >
-                    <div className="text-xs sm:text-sm font-bold flex items-center gap-1.5">
-                      <WifiOff
-                        className={`w-4 h-4 shrink-0 ${
-                          connectionUsageMode === 'LOCAL_OFFLINE'
-                            ? 'text-slate-950'
-                            : 'text-amber-600'
-                        }`}
-                      />
-                      <span>Local (Sin Internet)</span>
-                    </div>
-                    <div
-                      className={`text-[11px] mt-1 leading-snug ${
-                        connectionUsageMode === 'LOCAL_OFFLINE'
-                          ? 'text-slate-900'
-                          : 'text-slate-600'
-                      }`}
-                    >
-                      Circuitos 3D integrados, 1 o 2 jugadores y trofeos en tu dispositivo
-                    </div>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={handleSelectOnlineGlobal}
-                    className={`p-3 rounded-xl border-2 text-left transition-all cursor-pointer ${
-                      connectionUsageMode === 'ONLINE_GLOBAL'
-                        ? 'bg-sky-600 border-sky-700 text-white shadow-sm'
-                        : 'bg-sky-50/70 border-sky-200 text-slate-800 hover:bg-sky-100/80'
-                    }`}
-                  >
-                    <div className="text-xs sm:text-sm font-bold flex items-center gap-1.5">
-                      <Globe
-                        className={`w-4 h-4 shrink-0 ${
-                          connectionUsageMode === 'ONLINE_GLOBAL'
-                            ? 'text-amber-300'
-                            : 'text-sky-600'
-                        }`}
-                      />
-                      <span>Conexión a Internet Global + Pistas en Tiempo Real</span>
-                    </div>
-                    <div
-                      className={`text-[11px] mt-1 leading-snug ${
-                        connectionUsageMode === 'ONLINE_GLOBAL' ? 'text-sky-100' : 'text-slate-600'
-                      }`}
-                    >
-                      Salas multijugador globales, Mapas Reales y rutas del mundo en vivo
-                    </div>
-                  </button>
-                </div>
+          {/* LARGE PROMOTIONAL COVER & TRACK SHOWCASE (Gran Turismo Showcase Banner) */}
+          <div className="relative w-full rounded-3xl overflow-hidden border-2 border-white bg-slate-950 shadow-2xl min-h-[440px] sm:min-h-[500px] lg:min-h-[560px] flex flex-col justify-between">
+            {/* The Active Promotional Image Display */}
+            {!brokenImages[`promo_${activePromoSlide.id}`] ? (
+              <img
+                src={activePromoSlide.url}
+                alt={activePromoSlide.title}
+                referrerPolicy="no-referrer"
+                onError={() =>
+                  setBrokenImages((prev) => ({ ...prev, [`promo_${activePromoSlide.id}`]: true }))
+                }
+                className="absolute inset-0 w-full h-full object-cover transition-all duration-700 hover:scale-[1.01]"
+              />
+            ) : (
+              <div className="absolute inset-0 bg-gradient-to-br from-sky-600 via-sky-800 to-slate-900 flex items-center justify-center">
+                <Car className="w-20 h-20 text-white/60" />
               </div>
+            )}
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label
-                    htmlFor="hero-alias-input"
-                    className="block text-xs font-semibold text-slate-800 mb-1"
-                  >
-                    Apodo Juvenil de Piloto
-                  </label>
-                  <input
-                    id="hero-alias-input"
-                    type="text"
-                    maxLength={18}
-                    value={p1Alias}
-                    onChange={(e) => setP1Alias(sanitizeGamerUsername(e.target.value))}
-                    placeholder="Ej. RayoCielo7"
-                    autoComplete="off"
-                    className="w-full px-3 py-2 rounded-xl bg-sky-50/70 border border-sky-200 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-sky-500 focus:bg-white"
-                  />
-                </div>
-
-                <div>
-                  <label
-                    htmlFor="hero-mode-select"
-                    className="block text-xs font-semibold text-slate-800 mb-1"
-                  >
-                    Modo de Jugadores
-                  </label>
-                  <select
-                    id="hero-mode-select"
-                    value={sessionMode}
-                    onChange={(e) => setSessionMode(e.target.value as SessionMode)}
-                    className="w-full px-3 py-2 rounded-xl bg-sky-50/70 border border-sky-200 text-sm text-slate-900 focus:outline-none focus:border-sky-500 focus:bg-white"
-                  >
-                    <option value="SOLO">1 Jugador Local (Sin Internet o Con Internet)</option>
-                    <option value="SPLIT_2P">2 Jugadores Local (Pantalla Dividida)</option>
-                    <option value="ONLINE_MULTI">Sala Multijugador (Red Local o En Línea)</option>
-                  </select>
-                </div>
-              </div>
-
-              {sessionMode === 'ONLINE_MULTI' && (
-                <div className="space-y-3 pt-1">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div>
-                      <label
-                        htmlFor="room-code-input"
-                        className="block text-xs font-semibold text-slate-800 mb-1"
-                      >
-                        Código de Sala
-                      </label>
-                      <input
-                        id="room-code-input"
-                        type="text"
-                        maxLength={14}
-                        value={roomCode}
-                        onChange={(e) =>
-                          setRoomCode(e.target.value.replace(/[^A-Za-z0-9]/g, '').toUpperCase())
-                        }
-                        placeholder="PISTA1"
-                        autoComplete="off"
-                        className="w-full px-3 py-2 rounded-xl bg-sky-50 border border-sky-200 font-mono text-sm font-bold text-sky-800 uppercase focus:outline-none focus:border-sky-500"
-                      />
-                    </div>
-                    <div className="flex flex-col justify-end text-xs text-slate-600">
-                      <span>
-                        En línea puedes activar Mapas Reales y elegir otras pistas para la sala; sin
-                        internet usa circuitos locales 3D.
-                      </span>
-                    </div>
-                  </div>
-
-                  <OnlineRealMapsSelector
-                    compact
-                    variant="day"
-                    isOnline={isOnline}
-                    realMapEnabled={realMapEnabled}
-                    realMapTypeId={realMapTypeId}
-                    customPlaceTrack={customPlaceTrack}
-                    onToggleRealMap={setRealMapEnabled}
-                    onChangeMapTypeId={setRealMapTypeId}
-                    onSelectCustomPlaceTrack={setCustomPlaceTrack}
-                    onQuotaExceeded={() => setGmpQuotaExceeded(true)}
-                  />
-                </div>
-              )}
-
-              {sessionMode === 'SPLIT_2P' && (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-                  <div>
-                    <label
-                      htmlFor="p2-alias-input"
-                      className="block text-xs font-semibold text-slate-800 mb-1"
-                    >
-                      Apodo Jugador 2 (Flechas)
-                    </label>
-                    <input
-                      id="p2-alias-input"
-                      type="text"
-                      maxLength={18}
-                      value={p2Alias}
-                      onChange={(e) => setP2Alias(sanitizeGamerUsername(e.target.value))}
-                      autoComplete="off"
-                      className="w-full px-3 py-2 rounded-xl bg-sky-50 border border-sky-200 text-sm text-slate-900 focus:outline-none focus:border-sky-500"
-                    />
-                  </div>
-                  <div>
-                    <label
-                      htmlFor="p2-car-select"
-                      className="block text-xs font-semibold text-slate-800 mb-1"
-                    >
-                      Vehículo Jugador 2
-                    </label>
-                    <select
-                      id="p2-car-select"
-                      value={p2CarId}
-                      onChange={(e) => {
-                        const cid = e.target.value as CarModelId;
-                        setP2CarId(cid);
-                        setP2Paint(getCarById(cid).defaultPaint);
-                      }}
-                      className="w-full px-3 py-2 rounded-xl bg-sky-50 border border-sky-200 text-sm text-slate-900 focus:outline-none focus:border-sky-500"
-                    >
-                      {CARS_CATALOG.map((c) => (
-                        <option key={c.id} value={c.id}>
-                          {c.name}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-              )}
-
-              <div className="flex items-start gap-2 rounded-xl bg-emerald-50 border border-emerald-300/90 px-3 py-2 text-xs text-emerald-950">
-                <Lock className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
-                <span>
-                  <strong>Escudo Anti-Ubicación y Anti-Crackers:</strong> tu ubicación física real,
-                  GPS e IP jamás se leen ni se entregan a terceros, servidores ni otros jugadores.
+            {/* Top Interactive Carousel Strip for Promotional Images */}
+            <div className="relative z-10 p-4 sm:p-5 flex flex-wrap items-center justify-between gap-3 bg-gradient-to-b from-black/75 via-black/35 to-transparent">
+              <div className="flex items-center gap-2">
+                <span className="px-3 py-1 rounded-lg bg-sky-500/90 text-white font-bold text-xs shadow-sm uppercase tracking-wide">
+                  {activePromoSlide.badge}
+                </span>
+                <span className="text-xs text-white/90 font-medium drop-shadow">
+                  {promoSlideIdx + 1} de {promoSlides.length}
                 </span>
               </div>
 
-              <div className="pt-1 flex flex-wrap items-center justify-between gap-3">
-                <div className="text-xs text-slate-600">
-                  <span>Pista: </span>
-                  <strong className="text-slate-900">{effectiveMap.name}</strong>
-                  {isRealMapOverlayActive && (
-                    <span className="text-sky-700 font-semibold"> (Mapa Real)</span>
-                  )}
-                  <span aria-hidden="true"> · </span>
-                  <strong className="text-amber-700">{activeCar.name}</strong>
+              {/* Quick Promotional Image Tabs */}
+              <div className="flex items-center gap-1.5 p-1 rounded-xl bg-black/50 backdrop-blur-md border border-white/20 overflow-x-auto max-w-full">
+                {promoSlides.map((slide, idx) => (
+                  <button
+                    key={slide.id}
+                    type="button"
+                    onClick={() => {
+                      setPromoSlideIdx(idx);
+                      if (slide.mapId) {
+                        setSelectedMapId(slide.mapId);
+                      }
+                    }}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-all cursor-pointer ${
+                      promoSlideIdx === idx
+                        ? 'bg-amber-400 text-slate-950 shadow-md font-extrabold scale-105'
+                        : 'text-white/85 hover:text-white hover:bg-white/15'
+                    }`}
+                  >
+                    {slide.title.replace('Circuito 3D ', '').replace(' Oficial', '')}
+                  </button>
+                ))}
+                <div className="flex items-center gap-0.5 border-l border-white/20 pl-1.5 ml-1">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setPromoSlideIdx((i) => (i - 1 + promoSlides.length) % promoSlides.length)
+                    }
+                    title="Imagen anterior"
+                    aria-label="Imagen promocional anterior"
+                    className="p-1 rounded text-white/80 hover:text-white hover:bg-white/20 cursor-pointer"
+                  >
+                    ◀
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPromoSlideIdx((i) => (i + 1) % promoSlides.length)}
+                    title="Siguiente imagen"
+                    aria-label="Siguiente imagen promocional"
+                    className="p-1 rounded text-white/80 hover:text-white hover:bg-white/20 cursor-pointer"
+                  >
+                    ▶
+                  </button>
                 </div>
+              </div>
+            </div>
 
-                <div className="flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => openSubMenuSection('VIDEOS')}
-                    className="px-3.5 py-2.5 rounded-xl bg-sky-100 hover:bg-sky-200 border border-sky-300 text-sky-950 font-bold text-xs sm:text-sm flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer"
-                  >
-                    <Film className="w-4 h-4 text-sky-700 shrink-0" />
-                    <span>Videos y Vida</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleStartSimulation}
-                    className="px-6 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-sm shadow-sm transition-transform active:scale-95 flex items-center gap-2 whitespace-nowrap shrink-0 cursor-pointer"
-                  >
-                    <Play className="w-4 h-4 fill-slate-950" />
-                    <span>Entrar a la Pista 3D</span>
-                  </button>
+            {/* Bottom GT3 Gradient Scrim with Title, Info & Instant Action Buttons */}
+            <div className="relative overflow-hidden z-10 p-6 sm:p-8 bg-gradient-to-t from-[#051127]/98 via-[#09224f]/80 to-transparent flex flex-col md:flex-row md:items-end justify-between gap-5">
+              {/* GT3 Red Taillight Corner Accent */}
+              <div
+                aria-hidden="true"
+                className="pointer-events-none absolute -right-8 -bottom-4 top-4 w-32 -skew-x-[18deg] bg-gradient-to-b from-[#ff3b4e]/90 via-[#dc2626]/95 to-[#7f1d1d] border-l-2 border-rose-200/70"
+              />
+
+              <div className="relative z-10 space-y-1.5 max-w-xl">
+                <div className="text-xs font-semibold text-amber-300 flex items-center gap-2">
+                  <span>{t.selectedTrack}: {effectiveMap.name}</span>
+                  <span aria-hidden="true">·</span>
+                  <span>{t.selectedVehicle}: {activeCar.name}</span>
                 </div>
+                <h2 className="font-display italic text-2xl sm:text-3xl lg:text-4xl font-bold text-white tracking-wide drop-shadow-[0_2px_4px_rgba(0,0,0,0.85)] leading-tight">
+                  {activePromoSlide.title}
+                </h2>
+                <p className="text-xs sm:text-sm text-sky-100/90 leading-relaxed drop-shadow">
+                  {activePromoSlide.subtitle}
+                </p>
+              </div>
+
+              {/* Instant Gran Turismo Action Buttons */}
+              <div className="relative z-10 flex flex-wrap items-center gap-3 shrink-0">
+                <a
+                  href="/downloads/GuateRutas3D-v1.0.apk"
+                  download="GuateRutas3D-v1.0.apk"
+                  className="px-4 py-3 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs sm:text-sm flex items-center gap-2 shadow-lg shadow-emerald-950/40 whitespace-nowrap cursor-pointer transition-transform hover:scale-105"
+                >
+                  <Download className="w-4 h-4 text-emerald-100 shrink-0" />
+                  <span>{t.downloadApk}</span>
+                </a>
+
+                <button
+                  type="button"
+                  onClick={handleStartSimulation}
+                  className="px-6 sm:px-8 py-3.5 rounded-xl bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-slate-950 font-display font-extrabold text-sm sm:text-base shadow-xl shadow-amber-950/40 transition-transform hover:scale-105 active:scale-95 flex items-center gap-2.5 whitespace-nowrap cursor-pointer"
+                >
+                  <Play className="w-5 h-5 fill-slate-950 shrink-0" />
+                  <span>{t.enter3dTrack}</span>
+                </button>
               </div>
             </div>
           </div>
 
-          {/* Right Hero Visual Showcase: Official Daytime Video Game Cover Art + Circuit Preview Switcher */}
-          <div className="lg:col-span-6 relative rounded-3xl overflow-hidden border-2 border-white bg-sky-200 min-h-[370px] flex flex-col justify-between shadow-xl shadow-sky-900/10">
-            {heroVisualTab === 'CARATULA' ? (
-              !brokenImages.cover_panoramic ? (
-                <img
-                  src={COVER_ART_PANORAMIC_URL}
-                  alt="Carátula Oficial de Juego de 3D de Carros en día soleado"
-                  onError={() =>
-                    setBrokenImages((prev) => ({ ...prev, cover_panoramic: true }))
-                  }
-                  className="absolute inset-0 w-full h-full object-cover transition-transform duration-500 hover:scale-[1.02]"
-                />
-              ) : (
-                <div className="absolute inset-0 bg-gradient-to-br from-sky-400 via-sky-300 to-amber-200 flex items-center justify-center">
-                  <Car className="w-16 h-16 text-white" />
+          {/* BELOW THE PROMOTIONAL SHOWCASE: Fast Vehicle & Circuit Picker + Modality Configuration */}
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+            {/* Quick 1-Tap Vehicle Selector with Mini Figures */}
+            <div className="lg:col-span-7 bg-white/95 border border-sky-200 rounded-3xl p-5 shadow-md shadow-sky-900/5 space-y-3">
+              <div className="flex items-center justify-between pb-2 border-b border-sky-100">
+                <div>
+                  <h3 className="font-display text-base sm:text-lg font-bold text-slate-900">
+                    {t.quickVehicleTitle} ({activeCar.name})
+                  </h3>
+                  <p className="text-xs text-slate-600">
+                    {t.quickVehicleDesc}
+                  </p>
                 </div>
-              )
-            ) : !brokenImages[`hero_${activeMap.id}`] ? (
-              <img
-                src={activeMap.adaptedPhotoUrl}
-                alt={activeMap.adaptedPhotoCaption}
-                referrerPolicy="no-referrer"
-                onError={() =>
-                  setBrokenImages((p) => ({ ...p, [`hero_${activeMap.id}`]: true }))
-                }
-                className="absolute inset-0 w-full h-full object-cover transition-opacity duration-300"
-              />
-            ) : (
-              <div className="absolute inset-0 bg-gradient-to-br from-sky-400 via-sky-300 to-emerald-200 flex items-center justify-center">
-                <Compass className="w-16 h-16 text-white" />
+                <button
+                  type="button"
+                  onClick={() => setActiveSubMenu('GARAJE')}
+                  className="text-xs font-bold text-sky-700 hover:underline cursor-pointer shrink-0"
+                >
+                  {t.openGarage} ({CARS_CATALOG.length}) →
+                </button>
               </div>
-            )}
 
-            {/* Top Interactive Switcher inside Cover Art Frame */}
-            <div className="relative z-10 p-4 flex items-center justify-between gap-2">
-              <span className="text-xs font-bold text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.75)]">
-                {heroVisualTab === 'CARATULA'
-                  ? 'Carátula Oficial del Videojuego'
-                  : activeMap.regionLabel}
-              </span>
-              <div className="flex items-center gap-1 p-1 rounded-xl bg-white/90 backdrop-blur-md border border-sky-200 shadow-sm">
-                <button
-                  type="button"
-                  onClick={() => setHeroVisualTab('CARATULA')}
-                  className={`px-3 py-1 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
-                    heroVisualTab === 'CARATULA'
-                      ? 'bg-sky-600 text-white'
-                      : 'text-slate-700 hover:text-sky-700'
-                  }`}
-                >
-                  Carátula 3D
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setHeroVisualTab('PISTA')}
-                  className={`px-3 py-1 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
-                    heroVisualTab === 'PISTA'
-                      ? 'bg-sky-600 text-white'
-                      : 'text-slate-700 hover:text-sky-700'
-                  }`}
-                >
-                  Vista de Pista
-                </button>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 max-h-64 overflow-y-auto pr-1">
+                {CARS_CATALOG.map((car) => (
+                  <MiniVehicleFigure
+                    key={car.id}
+                    car={car}
+                    isSelected={car.id === p1CarId}
+                    onSelect={() => handleSelectCar(car.id)}
+                    compact
+                  />
+                ))}
               </div>
             </div>
 
-            {/* Bottom Scrim with GT3 Chrome Title, Red Corner Accent & Quick Play */}
-            <div className="relative overflow-hidden z-10 p-6 bg-gradient-to-t from-[#071d42]/95 via-[#0c316e]/70 to-transparent flex flex-col sm:flex-row sm:items-end justify-between gap-4">
-              <div
-                aria-hidden="true"
-                className="pointer-events-none absolute -right-8 -bottom-4 top-6 w-28 -skew-x-[18deg] bg-gradient-to-b from-[#ff3b4e]/85 via-[#dc2626]/90 to-[#7f1d1d]/95 border-l border-rose-200/60"
-              />
-              <div className="relative z-10 space-y-1">
-                <div className="text-xs text-sky-200 font-semibold">
-                  {heroVisualTab === 'CARATULA'
-                    ? `Piloto: ${safeP1Display} · ${activeCar.name}`
-                    : activeMap.adaptedPhotoCaption}
-                </div>
-                {heroVisualTab === 'CARATULA' ? (
-                  <>
-                    <h2 className="font-display italic text-2xl sm:text-3xl font-bold tracking-wider leading-tight drop-shadow-[0_2.5px_0_rgba(4,15,42,0.92)]">
-                      <span className="bg-gradient-to-b from-[#ffffff] via-[#e2e8f0] to-[#94a3b8] bg-clip-text text-transparent">
-                        GuateRutas{' '}
-                      </span>
-                      <span className="bg-gradient-to-b from-[#ffffff] via-[#f1f5f9] to-[#7dd3fc] bg-clip-text text-transparent">
-                        3D{' '}
-                      </span>
-                      <span className="bg-gradient-to-b from-[#f8fafc] via-[#dbeafe] to-[#93c5fd] bg-clip-text text-transparent">
-                        y más allá
-                      </span>
-                    </h2>
-                    <div className="font-display italic text-sm sm:text-base font-bold tracking-[0.12em] bg-gradient-to-b from-[#ffffff] via-[#e0f2fe] to-[#bae6fd] bg-clip-text text-transparent drop-shadow-[0_1.5px_0_rgba(4,15,42,0.88)]">
-                      Juegos de 3D de Carros
-                    </div>
-                  </>
-                ) : (
-                  <h2 className="font-display text-2xl sm:text-3xl font-bold text-white leading-tight">
-                    {effectiveMap.name}
-                  </h2>
-                )}
-                <p className="text-xs text-sky-100/90 max-w-md">
-                  {heroVisualTab === 'CARATULA'
-                    ? `Circuito listo: ${effectiveMap.name} · ${WORLD_MAPS_CATALOG.length} pistas locales y ${CARS_CATALOG.length} vehículos 3D.`
-                    : `Tramos: ${activeMap.roads.slice(0, 3).map((r) => r.name).join(' · ')}`}
+            {/* Quick Modality, Driver Alias & Multiplayer Setup */}
+            <div className="lg:col-span-5 bg-white/95 border border-sky-200 rounded-3xl p-5 shadow-md shadow-sky-900/5 space-y-4">
+              <div className="pb-2 border-b border-sky-100">
+                <h3 className="font-display text-base sm:text-lg font-bold text-slate-900">
+                  {t.modalityTitle}
+                </h3>
+                <p className="text-xs text-slate-600">
+                  {language === 'es' ? 'Configura tu apodo y elige modo local o multijugador.' : 'Set your driver alias and choose local or multiplayer mode.'}
                 </p>
               </div>
 
-              <button
-                type="button"
-                onClick={handleStartSimulation}
-                className="relative z-10 px-4 py-2.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold text-xs sm:text-sm shadow-md transition-transform hover:scale-105 cursor-pointer whitespace-nowrap shrink-0"
-              >
-                ¡Arrancar Carrera! →
-              </button>
+              {/* 2-Option Modality Selector */}
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={handleSelectLocalOffline}
+                  className={`p-2.5 rounded-xl border-2 text-left transition-all cursor-pointer ${
+                    connectionUsageMode === 'LOCAL_OFFLINE'
+                      ? 'bg-amber-400 border-amber-500 text-slate-950 shadow-sm'
+                      : 'bg-sky-50/70 border-sky-200 text-slate-800 hover:bg-sky-100/80'
+                  }`}
+                >
+                  <div className="text-xs font-bold flex items-center gap-1">
+                    <WifiOff className="w-3.5 h-3.5 shrink-0" />
+                    <span>{t.localOffline}</span>
+                  </div>
+                  <div className="text-[10px] mt-0.5 opacity-80">{t.localOfflineDesc}</div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleSelectOnlineGlobal}
+                  className={`p-2.5 rounded-xl border-2 text-left transition-all cursor-pointer ${
+                    connectionUsageMode === 'ONLINE_GLOBAL'
+                      ? 'bg-sky-600 border-sky-700 text-white shadow-sm'
+                      : 'bg-sky-50/70 border-sky-200 text-slate-800 hover:bg-sky-100/80'
+                  }`}
+                >
+                  <div className="text-xs font-bold flex items-center gap-1">
+                    <Globe className="w-3.5 h-3.5 shrink-0 text-amber-300" />
+                    <span>{t.onlineGlobal}</span>
+                  </div>
+                  <div className="text-[10px] mt-0.5 opacity-80">{t.onlineGlobalDesc}</div>
+                </button>
+              </div>
+
+              {/* Pilot Alias & Mode */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                <div>
+                  <label htmlFor="hero-pilot-alias" className="block text-xs font-semibold text-slate-800 mb-1">
+                    {t.pilotAliasLabel}
+                  </label>
+                  <input
+                    id="hero-pilot-alias"
+                    type="text"
+                    maxLength={18}
+                    value={p1Alias}
+                    onChange={(e) => setP1Alias(sanitizeGamerUsername(e.target.value))}
+                    placeholder={t.pilotAliasPlaceholder}
+                    className="w-full px-3 py-1.5 rounded-xl bg-sky-50 border border-sky-200 text-xs font-bold text-slate-900 focus:outline-none focus:border-sky-500"
+                  />
+                </div>
+
+                <div>
+                  <label htmlFor="hero-session-mode" className="block text-xs font-semibold text-slate-800 mb-1">
+                    {t.playersModeLabel}
+                  </label>
+                  <select
+                    id="hero-session-mode"
+                    value={sessionMode}
+                    onChange={(e) => setSessionMode(e.target.value as SessionMode)}
+                    className="w-full px-2 py-1.5 rounded-xl bg-sky-50 border border-sky-200 text-xs font-semibold text-slate-900 focus:outline-none focus:border-sky-500"
+                  >
+                    <option value="SOLO">{t.player1Solo}</option>
+                    <option value="SPLIT_2P">{t.player2Split}</option>
+                    <option value="ONLINE_MULTI">{t.playerOnlineRoom}</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Privacy Shield */}
+              <div className="flex items-center gap-2 rounded-xl bg-emerald-50 border border-emerald-300 px-3 py-1.5 text-[11px] text-emerald-950">
+                <Lock className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                <span>
+                  <strong>{language === 'es' ? 'Escudo Anti-Ubicación:' : 'Privacy Shield:'}</strong> {t.privacyShield}
+                </span>
+              </div>
             </div>
           </div>
         </section>
@@ -2950,11 +2962,11 @@ export default function App() {
                     </div>
                   </div>
 
-                  {/* Quick Vehicle Selector (Featuring Electric Quad-Trike & Solar Electric Tricycle!) */}
+                  {/* Quick Vehicle Selector with Mini Figures */}
                   <div className="space-y-2.5">
                     <div className="flex items-center justify-between">
                       <span className="text-xs font-bold text-slate-800">
-                        1. Elige Rápido tu Transporte con Avatar 3D ({activeCar.name}):
+                        1. Elige tu Vehículo ({activeCar.name}):
                       </span>
                       <button
                         type="button"
@@ -2964,31 +2976,16 @@ export default function App() {
                         Abrir Garaje 360° ({CARS_CATALOG.length}) →
                       </button>
                     </div>
-                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
-                      {CARS_CATALOG.slice(0, 6).map((car) => {
-                        const isPicked = car.id === p1CarId;
-                        return (
-                          <button
-                            key={car.id}
-                            type="button"
-                            onClick={() => handleSelectCar(car.id)}
-                            className={`p-3 rounded-xl border text-left transition-all cursor-pointer ${
-                              isPicked
-                                ? 'bg-sky-600 border-sky-700 text-white shadow-sm'
-                                : 'bg-sky-50/70 border-sky-200 text-slate-800 hover:bg-sky-100'
-                            }`}
-                          >
-                            <div className="text-xs font-bold truncate">{car.name}</div>
-                            <div
-                              className={`text-[11px] truncate mt-0.5 ${
-                                isPicked ? 'text-amber-200 font-semibold' : 'text-sky-800 font-medium'
-                              }`}
-                            >
-                              Valor: {car.valueMessage}
-                            </div>
-                          </button>
-                        );
-                      })}
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 max-h-56 overflow-y-auto pr-1">
+                      {CARS_CATALOG.map((car) => (
+                        <MiniVehicleFigure
+                          key={car.id}
+                          car={car}
+                          isSelected={car.id === p1CarId}
+                          onSelect={() => handleSelectCar(car.id)}
+                          compact
+                        />
+                      ))}
                     </div>
                   </div>
 
@@ -4322,13 +4319,23 @@ export default function App() {
               } bg-[#1b2430] border border-[#3b82f6] rounded-2xl p-6 text-center w-full shadow-[0_8px_24px_rgba(15,23,42,0.18)]`}
             >
               <h2 className="font-display text-[1.4rem] font-bold text-[#60a5fa] mb-2.5">
-                Aportación Voluntaria Libre ❤️
+                {language === 'es' ? 'Aportación Voluntaria Libre ❤️' : 'Voluntary Contribution ❤️'}
               </h2>
+
+              {/* Special Reward Message: A new themed highway for each contribution */}
+              <div className="mb-4 p-3.5 rounded-xl bg-gradient-to-r from-amber-500/20 via-sky-500/20 to-emerald-500/20 border border-amber-400/40 text-amber-200 text-xs sm:text-sm font-semibold flex items-center justify-center gap-2">
+                <span className="text-base">🏁</span>
+                <span>
+                  {language === 'es'
+                    ? '¡Recompensa Especial por Aporte! Por cada aporte o donación que realices, se desarrollará y se te brindará una nueva autopista 3D con su respectiva temática.'
+                    : 'Special Contribution Reward! For every contribution or donation, a brand new 3D highway with its dedicated theme will be developed and provided.'}
+                </span>
+              </div>
+
               <p className="text-[#9ca3af] text-[0.95rem] leading-relaxed mb-5">
-                Tu apoyo económico voluntario está destinado exclusivamente al soporte técnico,
-                mantenimiento de servidores y el financiamiento para el desarrollo de futuras
-                herramientas gratuitas dentro de esta plataforma. ¡Gracias por ayudarnos a mantener
-                este entorno seguro!
+                {language === 'es'
+                  ? 'Tu apoyo económico voluntario está destinado exclusivamente al soporte técnico, mantenimiento de servidores y el financiamiento para el desarrollo de futuras herramientas y autopistas dentro de esta plataforma.'
+                  : 'Your voluntary financial support is strictly allocated to technical support, server maintenance, and financing the development of future tracks and tools.'}
               </p>
               <form
                 className="mt-4 flex flex-col items-center gap-3"
@@ -4345,16 +4352,8 @@ export default function App() {
                   aria-label="Botón Donar con PayPal"
                   className="px-6 py-3 rounded-xl bg-[#ffc439] hover:bg-[#f4b41a] text-[#003087] font-bold text-sm shadow-lg transition-transform hover:scale-105 cursor-pointer flex items-center justify-center gap-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#60a5fa]"
                 >
-                  <span>Donar con PayPal</span>
+                  <span>{language === 'es' ? 'Donar con PayPal' : 'Donate with PayPal'}</span>
                 </button>
-                <a
-                  href="https://www.paypal.com/donate/?hosted_button_id=4E83JUKUBJHGW"
-                  target="_top"
-                  onClick={handlePasarelaNavigationGuard}
-                  className="text-xs font-medium text-[#60a5fa] hover:underline underline-offset-4"
-                >
-                  Abrir vínculo directo en la app →
-                </a>
               </form>
             </div>
           </div>

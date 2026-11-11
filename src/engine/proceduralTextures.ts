@@ -134,34 +134,54 @@ function buildRoadTexture(surface: RoadSurface, maxAnisotropy: number): THREE.Ca
       ctx.fillRect(253, y, 6, 36);
     }
   } else {
-    ctx.fillStyle = surface === 'boulevard' ? '#1f242d' : '#282d36';
+    // High-contrast, well-defined street and circuit markings
+    ctx.fillStyle = surface === 'boulevard' ? '#11141a' : '#141820';
     ctx.fillRect(0, 0, 512, 512);
-    for (let i = 0; i < 1800; i++) {
+
+    // Subtle asphalt grain texture
+    for (let i = 0; i < 900; i++) {
       const gx = (i * 97) % 512;
       const gy = (i * 151) % 512;
-      ctx.fillStyle = i % 2 === 0 ? 'rgba(255,255,255,0.035)' : 'rgba(0,0,0,0.09)';
+      ctx.fillStyle = i % 2 === 0 ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.12)';
       ctx.fillRect(gx, gy, 2, 2);
     }
-    ctx.fillStyle = '#64748b';
-    ctx.fillRect(0, 0, 30, 512);
-    ctx.fillRect(482, 0, 30, 512);
-    ctx.fillStyle = '#f8fafc';
-    ctx.fillRect(38, 0, 5, 512);
-    ctx.fillRect(469, 0, 5, 512);
+
+    // High-visibility Alternating Red & White Motorsport Curbs on both shoulders
+    for (let y = 0; y < 512; y += 32) {
+      const isRed = (y / 32) % 2 === 0;
+      ctx.fillStyle = isRed ? '#dc2626' : '#f8fafc';
+      ctx.fillRect(0, y, 26, 32);
+      ctx.fillRect(486, y, 26, 32);
+    }
+
+    // Solid Bright White Outer Road Shoulder Stripes (10px wide with crisp definition)
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(34, 0, 10, 512);
+    ctx.fillRect(468, 0, 10, 512);
 
     if (surface === 'boulevard') {
-      ctx.fillStyle = '#facc15';
-      ctx.fillRect(249, 0, 4, 512);
-      ctx.fillRect(259, 0, 4, 512);
-      ctx.fillStyle = 'rgba(248,250,252,0.75)';
-      for (let y = 16; y < 512; y += 64) {
-        ctx.fillRect(142, y, 4, 32);
-        ctx.fillRect(366, y, 4, 32);
+      // Vivid Double Yellow Center Divider Line (sharp and distinct)
+      ctx.fillStyle = '#fbbf24';
+      ctx.fillRect(247, 0, 7, 512);
+      ctx.fillRect(258, 0, 7, 512);
+
+      // Bright Dashed White Lane Divider Lines
+      ctx.fillStyle = '#ffffff';
+      for (let y = 12; y < 512; y += 64) {
+        ctx.fillRect(140, y, 6, 38);
+        ctx.fillRect(366, y, 6, 38);
       }
     } else {
-      ctx.fillStyle = '#facc15';
+      // Vivid Double Yellow Center Divider Line on Standard Road
+      ctx.fillStyle = '#fbbf24';
+      ctx.fillRect(248, 0, 6, 512);
+      ctx.fillRect(258, 0, 6, 512);
+
+      // Crisp White Dashed Guidance Accents
+      ctx.fillStyle = 'rgba(255,255,255,0.85)';
       for (let y = 16; y < 512; y += 64) {
-        ctx.fillRect(253, y, 6, 34);
+        ctx.fillRect(144, y, 4, 32);
+        ctx.fillRect(364, y, 4, 32);
       }
     }
   }

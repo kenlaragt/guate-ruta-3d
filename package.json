@@ -9,6 +9,7 @@
     "start": "node server.ts",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
+    "bundle:android": "vite build && mkdir -p android/app/src/main/assets && cp -r dist/* android/app/src/main/assets/",
     "lint": "tsc --noEmit"
   },
   "dependencies": {

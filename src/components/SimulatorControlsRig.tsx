@@ -263,12 +263,12 @@ export const SimulatorControlsRig: React.FC<SimulatorControlsRigProps> = ({
           }}
         >
           <div
-            className={`bg-[#0b101b] border border-slate-800 rounded-xl shadow-xl ${
-              compactMode ? 'p-2' : 'p-2.5'
+            className={`bg-slate-950/35 hover:bg-slate-950/70 active:bg-slate-950/80 backdrop-blur-[2px] border border-cyan-400/25 rounded-[32px] shadow-[0_8px_32px_rgba(0,0,0,0.4)] opacity-[0.35] hover:opacity-90 active:opacity-100 transition-opacity duration-150 ${
+              compactMode ? 'p-1.5' : 'p-2'
             }`}
           >
             {/* Compact Drag & Size Header */}
-            <div className="flex items-center justify-between gap-2 pb-1.5 mb-1.5 border-b border-slate-800/80">
+            <div className="flex items-center justify-between gap-2 pb-1 mb-1 border-b border-white/10">
               <div
                 onPointerDown={(e) => {
                   e.stopPropagation();
@@ -463,8 +463,8 @@ export const SimulatorControlsRig: React.FC<SimulatorControlsRigProps> = ({
                     compactMode ? 'min-h-[42px] text-sm' : 'min-h-[46px] text-base'
                   } rounded-lg border font-bold select-none touch-none flex items-center justify-center transition-colors ${
                     turnPressed === 'LEFT'
-                      ? 'bg-amber-500 border-amber-300 text-slate-950'
-                      : 'bg-slate-900 hover:bg-slate-800 border-slate-700 text-slate-100'
+                      ? 'bg-amber-400/80 border-amber-300 text-slate-950 scale-95'
+                      : 'bg-white/10 hover:bg-white/20 border-white/20 text-slate-100 hover:border-white/40'
                   }`}
                 >
                   ◀
@@ -491,8 +491,8 @@ export const SimulatorControlsRig: React.FC<SimulatorControlsRigProps> = ({
                     compactMode ? 'min-h-[42px] text-sm' : 'min-h-[46px] text-base'
                   } rounded-lg border font-bold select-none touch-none flex items-center justify-center transition-colors ${
                     turnPressed === 'RIGHT'
-                      ? 'bg-amber-500 border-amber-300 text-slate-950'
-                      : 'bg-slate-900 hover:bg-slate-800 border-slate-700 text-slate-100'
+                      ? 'bg-amber-400/80 border-amber-300 text-slate-950 scale-95'
+                      : 'bg-white/10 hover:bg-white/20 border-white/20 text-slate-100 hover:border-white/40'
                   }`}
                 >
                   ▶
@@ -513,12 +513,12 @@ export const SimulatorControlsRig: React.FC<SimulatorControlsRigProps> = ({
           }}
         >
           <div
-            className={`bg-[#0b101b] border border-slate-800 rounded-xl shadow-xl ${
-              compactMode ? 'p-2' : 'p-2.5'
+            className={`bg-slate-950/35 hover:bg-slate-950/70 active:bg-slate-950/80 backdrop-blur-[2px] border border-cyan-400/25 rounded-[32px] shadow-[0_8px_32px_rgba(0,0,0,0.4)] opacity-[0.35] hover:opacity-90 active:opacity-100 transition-opacity duration-150 ${
+              compactMode ? 'p-1.5' : 'p-2'
             }`}
           >
             {/* Compact Drag, Auto/Manual Toggle & Size Header */}
-            <div className="flex items-center justify-between gap-2 pb-1.5 mb-1.5 border-b border-slate-800/80">
+            <div className="flex items-center justify-between gap-2 pb-1 mb-1 border-b border-white/10">
               <div
                 onPointerDown={(e) => {
                   e.stopPropagation();
@@ -782,12 +782,12 @@ export const SimulatorControlsRig: React.FC<SimulatorControlsRigProps> = ({
                     compactMode ? 'min-w-[52px] h-18 text-xs' : 'min-w-[58px] h-22 text-xs'
                   } rounded-xl border font-bold flex flex-col items-center justify-between py-2 px-2 select-none touch-none transition-transform ${
                     isBrakeActive
-                      ? 'bg-red-600 border-red-300 text-white scale-95'
-                      : 'bg-slate-900 border-slate-700 text-slate-200 hover:border-slate-500'
+                      ? 'bg-red-600/80 border-red-300 text-white scale-95 shadow-lg shadow-red-900/30'
+                      : 'bg-white/10 hover:bg-white/20 border-white/20 text-slate-100 hover:border-white/40'
                   }`}
                 >
                   <span>Freno</span>
-                  <span className="font-mono text-[10px] opacity-80">S / Rev</span>
+                  <span className="font-mono text-[10px] opacity-75">S / Rev</span>
                 </button>
 
                 <button
@@ -811,12 +811,12 @@ export const SimulatorControlsRig: React.FC<SimulatorControlsRigProps> = ({
                     compactMode ? 'min-w-[74px] h-22 text-sm' : 'min-w-[84px] h-26 text-base'
                   } rounded-xl border-2 font-display font-bold flex flex-col items-center justify-between py-2.5 px-3 select-none touch-none transition-transform ${
                     isGasActive
-                      ? 'bg-emerald-500 border-emerald-200 text-slate-950 scale-95 shadow-lg'
-                      : 'bg-amber-500 hover:bg-amber-400 border-amber-300 text-slate-950 shadow'
+                      ? 'bg-emerald-500/85 border-emerald-200 text-slate-950 scale-95 shadow-lg shadow-emerald-900/40'
+                      : 'bg-amber-500/50 hover:bg-amber-500/80 border-amber-300/40 text-white shadow'
                   }`}
                 >
                   <span>GAS</span>
-                  <span className="font-mono text-[10px] font-bold opacity-85">Acelerar (W)</span>
+                  <span className="font-mono text-[10px] font-bold opacity-80">Acelerar (W)</span>
                 </button>
 
                 <button
@@ -840,8 +840,8 @@ export const SimulatorControlsRig: React.FC<SimulatorControlsRigProps> = ({
                     compactMode ? 'min-w-[50px] h-18' : 'min-w-[56px] h-20'
                   } rounded-xl border font-bold text-xs flex flex-col items-center justify-between py-2 px-1.5 select-none touch-none transition-transform ${
                     nitroPressed
-                      ? 'bg-sky-400 border-white text-slate-950 scale-95'
-                      : 'bg-slate-900 border-sky-600/80 text-sky-300 hover:border-sky-400'
+                      ? 'bg-sky-400/85 border-white text-slate-950 scale-95 shadow-lg shadow-sky-900/30'
+                      : 'bg-sky-950/30 border-sky-400/30 text-sky-200 hover:border-sky-400/60'
                   }`}
                 >
                   <span>Nitro</span>

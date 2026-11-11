@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <group
+        android:scaleX="0.65"
+        android:scaleY="0.65"
+        android:translateX="18.9"
+        android:translateY="18.9">
+        <!-- 3D Sport Racing Car Silhouette -->
+        <path
+            android:fillColor="#ffffff"
+            android:pathData="M18,65 L26,45 L40,36 L70,36 L86,45 L94,65 L88,72 L82,72 C80,68 76,64 70,64 C64,64 60,68 58,72 L44,72 C42,68 38,64 32,64 C26,64 22,68 20,72 L14,72 Z" />
+        <path
+            android:fillColor="#0f172a"
+            android:pathData="M32,66 A7,7 0 1,0 32,80 A7,7 0 1,0 32,66 Z" />
+        <path
+            android:fillColor="#0f172a"
+            android:pathData="M70,66 A7,7 0 1,0 70,80 A7,7 0 1,0 70,66 Z" />
+        <path
+            android:fillColor="#38bdf8"
+            android:pathData="M42,40 L68,40 L78,48 L32,48 Z" />
+    </group>
+</vector>
