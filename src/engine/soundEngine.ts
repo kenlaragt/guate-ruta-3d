@@ -10,44 +10,52 @@ class SimulatorSoundEngine {
   private running = false;
 
   public init() {
-    if (this.ctx) {
-      if (this.ctx.state === 'suspended') {
-        this.ctx.resume().catch(() => {});
+    try {
+      if (this.ctx) {
+        if (this.ctx.state === 'suspended') {
+          this.ctx.resume().catch(() => {});
+        }
+        return;
       }
-      return;
+      const AudioCtx =
+        window.AudioContext ||
+        (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (!AudioCtx) return;
+
+      this.ctx = new AudioCtx();
+      this.filterNode = this.ctx.createBiquadFilter();
+      this.filterNode.type = 'lowpass';
+      this.filterNode.frequency.value = 380;
+
+      this.engineGain = this.ctx.createGain();
+      this.engineGain.gain.value = 0;
+
+      this.mainOsc = this.ctx.createOscillator();
+      this.subOsc = this.ctx.createOscillator();
+      this.mainOsc.type = 'sawtooth';
+      this.subOsc.type = 'triangle';
+
+      this.mainOsc.connect(this.filterNode);
+      this.subOsc.connect(this.filterNode);
+      this.filterNode.connect(this.engineGain);
+      this.engineGain.connect(this.ctx.destination);
+
+      this.mainOsc.start();
+      this.subOsc.start();
+      this.running = true;
+    } catch {
+      this.running = false;
     }
-    const AudioCtx =
-      window.AudioContext ||
-      (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-    if (!AudioCtx) return;
-
-    this.ctx = new AudioCtx();
-    this.filterNode = this.ctx.createBiquadFilter();
-    this.filterNode.type = 'lowpass';
-    this.filterNode.frequency.value = 380;
-
-    this.engineGain = this.ctx.createGain();
-    this.engineGain.gain.value = 0;
-
-    this.mainOsc = this.ctx.createOscillator();
-    this.subOsc = this.ctx.createOscillator();
-    this.mainOsc.type = 'sawtooth';
-    this.subOsc.type = 'triangle';
-
-    this.mainOsc.connect(this.filterNode);
-    this.subOsc.connect(this.filterNode);
-    this.filterNode.connect(this.engineGain);
-    this.engineGain.connect(this.ctx.destination);
-
-    this.mainOsc.start();
-    this.subOsc.start();
-    this.running = true;
   }
 
   public setMuted(mute: boolean) {
     this.muted = mute;
-    if (this.engineGain && this.ctx) {
-      this.engineGain.gain.setTargetAtTime(mute ? 0 : 0.04, this.ctx.currentTime, 0.05);
+    try {
+      if (this.engineGain && this.ctx) {
+        this.engineGain.gain.setTargetAtTime(mute ? 0 : 0.04, this.ctx.currentTime, 0.05);
+      }
+    } catch {
+      // Ignore audio state errors
     }
   }
 

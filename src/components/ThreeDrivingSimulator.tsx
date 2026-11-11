@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import {
@@ -8,6 +8,12 @@ import {
 } from '../data/awardsCatalog';
 import { getCarById } from '../data/carsCatalog';
 import {
+  buildFallbackSceneData,
+  FallbackSceneData,
+  FallbackVehicleActor,
+  renderFallback3DViewport,
+} from '../engine/canvas3dFallbackRenderer';
+import {
   CarRig3D,
   createCheckpointMetaStage3D,
   createLandmarkGroup,
@@ -16,7 +22,7 @@ import {
   createWalkingPedestrian3D,
   WalkingPedestrian3D,
 } from '../engine/models3d';
-import { createProceduralTexturePack } from '../engine/proceduralTextures';
+import { createProceduralTexturePack, detectSoftwareWebGL } from '../engine/proceduralTextures';
 import {
   createGuidanceArrowRig3D,
   createScenicWorldEnvironment3D,
@@ -32,6 +38,7 @@ import {
   AwardDeliveryRecord,
   CameraMode,
   CarModelId,
+  CarSpec,
   DriveExperienceMode,
   GameState,
   GearLabel,
@@ -130,8 +137,15 @@ interface BuildingCollider {
   halfD: number;
 }
 
+const _cam1LookActual = new THREE.Vector3();
+
 interface TrafficAgent {
-  rig: CarRig3D;
+  rig?: CarRig3D;
+  spec: CarSpec;
+  paintHex: string;
+  x: number;
+  z: number;
+  heading: number;
   path: RoadNode2D[];
   segIndex: number;
   t: number;
@@ -147,7 +161,11 @@ interface TrafficAgent {
 }
 
 interface PedestrianAgent {
-  actor: WalkingPedestrian3D;
+  actor?: WalkingPedestrian3D;
+  x: number;
+  z: number;
+  heading: number;
+  shirtColor: string;
   ax: number;
   az: number;
   bx: number;
@@ -211,6 +229,12 @@ export const ThreeDrivingSimulator: React.FC<ThreeDrivingSimulatorProps> = ({
   const mountRef = useRef<HTMLDivElement | null>(null);
   const descentStartTimeRef = useRef<number>(performance.now());
   const prevCelebrateSeqRef = useRef<number>(celebrateAllWinSeq);
+  const [contextRetrySeq, setContextRetrySeq] = useState(0);
+
+  const sceneInputRef = useRef({ map, extraRoads });
+  sceneInputRef.current = { map, extraRoads };
+  const extraRoadsKey =
+    extraRoads.length === 0 ? '' : extraRoads.map((seg) => seg.id).join('|');
 
   // Store latest props in refs so WebGL context stays stable across HUD state updates
   const latestPropsRef = useRef({
@@ -335,150 +359,219 @@ export const ThreeDrivingSimulator: React.FC<ThreeDrivingSimulatorProps> = ({
       checkpointIdx: 0,
       checkpointsCollected: 0,
     };
-  }, [map, driveMode, resetTrigger]);
+  }, [map.id, driveMode, resetTrigger]);
 
   // Trigger synchronized sky-to-street satellite camera descent when map changes or user clicks "Bajar Satélite"
   useEffect(() => {
     descentStartTimeRef.current = performance.now();
   }, [map.id, descentTrigger]);
 
-  // Main Three.js Scene & Simulation Lifecycle
+  // Main Three.js Scene & Built-in 3D Perspective Canvas Simulation Lifecycle
   useEffect(() => {
     const container = mountRef.current;
     if (!container) return;
 
-    // 1. Software-WebGL Guard per threejs/SKILL.md
-    const isSoftwareGl = (() => {
-      const probeCanvas = document.createElement('canvas');
-      const gl = probeCanvas.getContext('webgl2');
-      if (!gl) return true;
-      const ext = gl.getExtension('WEBGL_debug_renderer_info');
-      const param = ext ? ext.UNMASKED_RENDERER_WEBGL : gl.RENDERER;
-      const gpu = String(gl.getParameter(param));
-      gl.getExtension('WEBGL_lose_context')?.loseContext();
-      return /SwiftShader|llvmpipe|softpipe|Software|Basic Render/i.test(gpu);
-    })();
+    const map = sceneInputRef.current.map;
+    const extraRoads = sceneInputRef.current.extraRoads;
 
-    const renderer = new THREE.WebGLRenderer({
-      antialias: !isSoftwareGl,
-      alpha: realMapOverlayMode,
-      powerPreference: 'high-performance',
-    });
-    renderer.outputColorSpace = THREE.SRGBColorSpace;
-    renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.08;
-    if (realMapOverlayMode) {
-      renderer.setClearColor(0x000000, 0);
+    // 1. Singleton Software-WebGL Guard (never leaks probe contexts)
+    const isSoftwareGl = detectSoftwareWebGL();
+    const initW = Math.max(2, container.clientWidth || window.innerWidth || 1280);
+    const initH = Math.max(2, container.clientHeight || window.innerHeight || 720);
+
+    let activeRenderer: THREE.WebGLRenderer | null = null;
+    try {
+      activeRenderer = new THREE.WebGLRenderer({
+        antialias: !isSoftwareGl,
+        alpha: realMapOverlayMode,
+        powerPreference: 'high-performance',
+      });
+    } catch {
+      try {
+        activeRenderer = new THREE.WebGLRenderer({
+          antialias: false,
+          alpha: realMapOverlayMode,
+          failIfMajorPerformanceCaveat: false,
+        });
+      } catch {
+        try {
+          const probeCanvas = document.createElement('canvas');
+          const gl2 = probeCanvas.getContext('webgl2', {
+            alpha: realMapOverlayMode,
+            antialias: false,
+            depth: true,
+            stencil: false,
+            failIfMajorPerformanceCaveat: false,
+          }) as WebGL2RenderingContext | null;
+          if (gl2) {
+            activeRenderer = new THREE.WebGLRenderer({
+              canvas: probeCanvas,
+              context: gl2,
+              antialias: false,
+              alpha: realMapOverlayMode,
+            });
+          }
+        } catch {
+          activeRenderer = null;
+        }
+      }
     }
-    renderer.setPixelRatio(isSoftwareGl ? 1 : Math.min(window.devicePixelRatio, 2));
-    renderer.shadowMap.enabled = !isSoftwareGl && !realMapOverlayMode;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-    renderer.setSize(container.clientWidth || window.innerWidth, container.clientHeight || window.innerHeight);
 
-    container.innerHTML = '';
-    container.appendChild(renderer.domElement);
+    const renderer: THREE.WebGLRenderer | null = activeRenderer;
+    let contextLost = false;
+    let fallbackCanvas: HTMLCanvasElement | null = null;
+    let fallbackCtx: CanvasRenderingContext2D | null = null;
+
+    const ensureFallbackCanvas = (): CanvasRenderingContext2D | null => {
+      if (!fallbackCanvas) {
+        fallbackCanvas = document.createElement('canvas');
+        fallbackCanvas.width = Math.max(2, container.clientWidth || window.innerWidth || 1280);
+        fallbackCanvas.height = Math.max(2, container.clientHeight || window.innerHeight || 720);
+        fallbackCanvas.style.width = '100%';
+        fallbackCanvas.style.height = '100%';
+        fallbackCanvas.style.display = 'block';
+        fallbackCtx = fallbackCanvas.getContext('2d');
+      }
+      if (fallbackCanvas.parentElement !== container) {
+        container.innerHTML = '';
+        container.appendChild(fallbackCanvas);
+      }
+      return fallbackCtx;
+    };
 
     const handleContextLost = (e: Event) => {
       e.preventDefault();
+      contextLost = true;
+      ensureFallbackCanvas();
     };
-    renderer.domElement.addEventListener('webglcontextlost', handleContextLost);
+    const handleContextRestored = () => {
+      contextLost = false;
+      setContextRetrySeq((s) => s + 1);
+    };
 
-    const scene = new THREE.Scene();
+    if (renderer) {
+      renderer.outputColorSpace = THREE.SRGBColorSpace;
+      renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      renderer.toneMappingExposure = 1.08;
+      if (realMapOverlayMode) {
+        renderer.setClearColor(0x000000, 0);
+      } else {
+        renderer.setClearColor(0x58b4f8, 1);
+      }
+      renderer.setPixelRatio(isSoftwareGl ? 1 : Math.min(window.devicePixelRatio || 1, 2));
+      renderer.shadowMap.enabled = !isSoftwareGl && !realMapOverlayMode;
+      renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+      renderer.setSize(initW, initH);
 
-    // Studio Environment Reflection (RoomEnvironment + PMREMGenerator)
-    const pmremGenerator = new THREE.PMREMGenerator(renderer);
-    const envTex = pmremGenerator.fromScene(new RoomEnvironment(), 0.04).texture;
-    scene.environment = envTex;
-    pmremGenerator.dispose();
+      container.innerHTML = '';
+      container.appendChild(renderer.domElement);
+      renderer.domElement.addEventListener('webglcontextlost', handleContextLost, false);
+      renderer.domElement.addEventListener('webglcontextrestored', handleContextRestored, false);
+    }
 
-    // Cameras (Player 1 + Player 2 for Split-Screen)
-    const width0 = container.clientWidth || window.innerWidth;
-    const height0 = container.clientHeight || window.innerHeight;
-    const cam1 = new THREE.PerspectiveCamera(62, width0 / height0, 0.2, 1300);
+    const scene: THREE.Scene | null = renderer ? new THREE.Scene() : null;
+    let envTex: THREE.Texture | null = null;
+    if (renderer && scene) {
+      const pmremGenerator = new THREE.PMREMGenerator(renderer);
+      envTex = pmremGenerator.fromScene(new RoomEnvironment(), 0.04).texture;
+      scene.environment = envTex;
+      pmremGenerator.dispose();
+    }
+
+    // Cameras (Player 1 + Player 2 for Split-Screen — pure math objects, active in both WebGL & Canvas 3D modes)
+    const cam1 = new THREE.PerspectiveCamera(62, initW / initH, 0.2, 1300);
     cam1.position.set(map.spawn.x, 4, map.spawn.z + 9);
-    const cam2 = new THREE.PerspectiveCamera(62, (width0 * 0.5) / height0, 0.2, 1300);
+    const cam2 = new THREE.PerspectiveCamera(62, (initW * 0.5) / initH, 0.2, 1300);
     cam2.position.set(map.spawn.x + 4, 4, map.spawn.z + 11);
 
-    // 3-Point Warm/Cool Outdoor Lighting Rig
-    const hemiLight = new THREE.HemisphereLight(0x93c5fd, 0x3b4232, 0.85);
-    scene.add(hemiLight);
-
-    const sunLight = new THREE.DirectionalLight(0xfff1d6, 2.1);
-    sunLight.position.set(120, 175, 95);
-    if (!isSoftwareGl) {
-      sunLight.castShadow = true;
-      sunLight.shadow.mapSize.set(1024, 1024);
-      const d = 160;
-      sunLight.shadow.camera.left = -d;
-      sunLight.shadow.camera.right = d;
-      sunLight.shadow.camera.top = d;
-      sunLight.shadow.camera.bottom = -d;
-      sunLight.shadow.camera.near = 10;
-      sunLight.shadow.camera.far = 480;
-      sunLight.shadow.bias = -0.0005;
-      sunLight.shadow.normalBias = 0.02;
-    }
-    scene.add(sunLight);
-
-    const rimLight = new THREE.DirectionalLight(0x7dd3fc, 0.55);
-    rimLight.position.set(-140, 80, -130);
-    scene.add(rimLight);
-
     let scenicWorld: ScenicWorldHandle3D | null = null;
+    let applyAtmosphere: (tod: TimeOfDay) => void = () => {};
 
-    // Helper to apply time-of-day atmosphere (crisp horizon visibility for mountains, volcanoes & Cristo Redentor)
-    const applyAtmosphere = (tod: TimeOfDay) => {
-      scenicWorld?.setTimeOfDay(tod);
-      if (tod === 'NIGHT') {
-        if (realMapOverlayMode) {
-          scene.background = null;
-          scene.fog = null;
-        } else {
-          const bg = new THREE.Color(0x091122);
-          scene.background = bg;
-          scene.fog = new THREE.FogExp2(0x091122, 0.00085);
-        }
-        sunLight.color.setHex(0x93c5fd);
-        sunLight.intensity = 0.65;
-        hemiLight.intensity = 0.48;
-        renderer.toneMappingExposure = 1.22;
-      } else if (tod === 'GOLDEN') {
-        if (realMapOverlayMode) {
-          scene.background = null;
-          scene.fog = null;
-        } else {
-          const bg = new THREE.Color(0xd98a5f);
-          scene.background = bg;
-          scene.fog = new THREE.FogExp2(0xd98a5f, 0.00048);
-        }
-        sunLight.color.setHex(0xffb86c);
-        sunLight.intensity = 2.25;
-        sunLight.position.set(180, 75, 130);
-        hemiLight.intensity = 0.85;
-        renderer.toneMappingExposure = 1.1;
-      } else {
-        if (realMapOverlayMode) {
-          scene.background = null;
-          scene.fog = null;
-        } else {
-          const bg = new THREE.Color(map.skyTintDay || '#58b4f8');
-          scene.background = bg;
-          scene.fog = new THREE.FogExp2(0xdbf0ff, 0.00038);
-        }
-        sunLight.color.setHex(0xfff6e5);
-        sunLight.intensity = 2.2;
-        sunLight.position.set(120, 175, 95);
-        hemiLight.intensity = 0.96;
-        renderer.toneMappingExposure = 1.07;
+    if (renderer && scene) {
+      // 3-Point Warm/Cool Outdoor Lighting Rig
+      const hemiLight = new THREE.HemisphereLight(0x93c5fd, 0x3b4232, 0.85);
+      scene.add(hemiLight);
+
+      const sunLight = new THREE.DirectionalLight(0xfff1d6, 2.1);
+      sunLight.position.set(120, 175, 95);
+      if (!isSoftwareGl) {
+        sunLight.castShadow = true;
+        sunLight.shadow.mapSize.set(1024, 1024);
+        const d = 160;
+        sunLight.shadow.camera.left = -d;
+        sunLight.shadow.camera.right = d;
+        sunLight.shadow.camera.top = d;
+        sunLight.shadow.camera.bottom = -d;
+        sunLight.shadow.camera.near = 10;
+        sunLight.shadow.camera.far = 480;
+        sunLight.shadow.bias = -0.0005;
+        sunLight.shadow.normalBias = 0.02;
       }
-    };
-    applyAtmosphere(latestPropsRef.current.timeOfDay);
+      scene.add(sunLight);
 
-    // Procedural PBR Textures
-    const texPack = createProceduralTexturePack(renderer, map.houseStyle);
+      const rimLight = new THREE.DirectionalLight(0x7dd3fc, 0.55);
+      rimLight.position.set(-140, 80, -130);
+      scene.add(rimLight);
+
+      // Helper to apply time-of-day atmosphere
+      applyAtmosphere = (tod: TimeOfDay) => {
+        scenicWorld?.setTimeOfDay(tod);
+        if (tod === 'NIGHT') {
+          if (realMapOverlayMode) {
+            scene.background = null;
+            scene.fog = null;
+          } else {
+            const bg = new THREE.Color(0x091122);
+            scene.background = bg;
+            scene.fog = new THREE.FogExp2(0x091122, 0.00085);
+          }
+          sunLight.color.setHex(0x93c5fd);
+          sunLight.intensity = 0.65;
+          hemiLight.intensity = 0.48;
+          renderer.toneMappingExposure = 1.22;
+        } else if (tod === 'GOLDEN') {
+          if (realMapOverlayMode) {
+            scene.background = null;
+            scene.fog = null;
+          } else {
+            const bg = new THREE.Color(0xd98a5f);
+            scene.background = bg;
+            scene.fog = new THREE.FogExp2(0xd98a5f, 0.00048);
+          }
+          sunLight.color.setHex(0xffb86c);
+          sunLight.intensity = 2.25;
+          sunLight.position.set(180, 75, 130);
+          hemiLight.intensity = 0.85;
+          renderer.toneMappingExposure = 1.1;
+        } else {
+          if (realMapOverlayMode) {
+            scene.background = null;
+            scene.fog = null;
+          } else {
+            const bg = new THREE.Color(map.skyTintDay || '#58b4f8');
+            scene.background = bg;
+            scene.fog = new THREE.FogExp2(0xdbf0ff, 0.00038);
+          }
+          sunLight.color.setHex(0xfff6e5);
+          sunLight.intensity = 2.2;
+          sunLight.position.set(120, 175, 95);
+          hemiLight.intensity = 0.96;
+          renderer.toneMappingExposure = 1.07;
+        }
+      };
+      applyAtmosphere(latestPropsRef.current.timeOfDay);
+    }
+
+    // Procedural PBR Textures (when WebGL2 active)
+    const texPack = renderer ? createProceduralTexturePack(renderer, map.houseStyle) : null;
     const allRoads = [...map.roads, ...extraRoads];
     const colliders: BuildingCollider[] = [];
     let welcomeBillboardTex: THREE.Texture | null = null;
+    let wildlifeHandle: AnimatedWorldWildlifeHandle | null = null;
+    let circuitInfra: ReturnType<typeof createClosedCircuitInfrastructure3D> | null = null;
+    let pedestriansTex: THREE.Texture | null = null;
+    let grandTrophyTex: THREE.Texture | null = null;
+    let fallbackSceneData: FallbackSceneData;
 
     // Helper: minimum distance from any road centerline or landmark
     const isClearOfRoadsAndLandmarks = (cx: number, cz: number, minPad: number): boolean => {
@@ -501,7 +594,8 @@ export const ThreeDrivingSimulator: React.FC<ThreeDrivingSimulatorProps> = ({
     };
 
     // Build stylized 3D circuits, 3D houses, trees, cover-art landscapes, moving water, and landmarks
-    if (!realMapOverlayMode) {
+    if (renderer && scene && texPack) {
+      if (!realMapOverlayMode) {
       // Build All Road Ribbons & Intersection Discs
       const junctionSet = new Map<
         string,
@@ -771,35 +865,80 @@ export const ThreeDrivingSimulator: React.FC<ThreeDrivingSimulatorProps> = ({
       );
       scenicWorld.setTimeOfDay(latestPropsRef.current.timeOfDay);
       scene.add(scenicWorld.group);
-    }
+    } else {
+      // In Real Map Overlay mode, still render subtle semi-transparent 3D road ribbons & landmarks
+      // so the circuit is 100% visible even while online map tiles stream in or if blocked by VPN
+      allRoads.forEach((seg, segIdx) => {
+        for (let i = 0; i < seg.points.length - 1; i++) {
+          const a = seg.points[i];
+          const b = seg.points[i + 1];
+          const dx = b.x - a.x;
+          const dz = b.z - a.z;
+          const len = Math.hypot(dx, dz);
+          if (len < 1) continue;
 
-    // Sky White Clouds & 3D Flying Songbirds ("Pajaritos")
-    const wildlifeHandle: AnimatedWorldWildlifeHandle = createWorldWildlifeAndZoo3D(map, true);
-    scene.add(wildlifeHandle.group);
+          const stripGeo = new THREE.PlaneGeometry(seg.width, len);
+          stripGeo.rotateX(-Math.PI / 2);
+          const roadMat = new THREE.MeshStandardMaterial({
+            map: texPack.roads[seg.surface],
+            roughness: 0.78,
+            metalness: 0.05,
+            transparent: true,
+            opacity: 0.62,
+            polygonOffset: true,
+            polygonOffsetFactor: -1,
+            polygonOffsetUnits: -1,
+          });
+          const strip = new THREE.Mesh(stripGeo, roadMat);
+          strip.position.set(
+            (a.x + b.x) / 2,
+            0.04 + (segIdx % 5) * 0.002,
+            (a.z + b.z) / 2,
+          );
+          strip.rotation.y = Math.atan2(dx, dz);
+          scene.add(strip);
+        }
+      });
+      for (const lm of map.landmarks) {
+        scene.add(createLandmarkGroup(lm, texPack));
+      }
+      }
 
-    // Closed-Circuit Motorsport Infrastructure (Start/Finish Gantry, Red/White FIA Kerbs & Tire Walls)
-    const circuitInfra = createClosedCircuitInfrastructure3D(map);
-    scene.add(circuitInfra.group);
+      // Sky White Clouds & 3D Flying Songbirds ("Pajaritos")
+      wildlifeHandle = createWorldWildlifeAndZoo3D(map, true);
+      scene.add(wildlifeHandle.group);
 
-    // Load Textures for 3D Walking Pedestrians ("Gente Caminando") & Grand Trophy Showcase
-    const peopleLoader = new THREE.TextureLoader();
-    const maxAniso = renderer.capabilities.getMaxAnisotropy();
-    const pedestriansTex = peopleLoader.load(REAL_PEOPLE_ASSETS.pedestriansSheetUrl, (loaded) => {
-      loaded.colorSpace = THREE.SRGBColorSpace;
-      loaded.anisotropy = maxAniso;
-      loaded.needsUpdate = true;
-    });
-    pedestriansTex.colorSpace = THREE.SRGBColorSpace;
+      // Closed-Circuit Motorsport Infrastructure (Start/Finish Gantry, Red/White FIA Kerbs & Tire Walls)
+      circuitInfra = createClosedCircuitInfrastructure3D(map);
+      scene.add(circuitInfra.group);
 
-    const grandTrophyTex = peopleLoader.load(
-      REAL_PEOPLE_ASSETS.grandTrophyShowcaseUrl,
-      (loaded) => {
+      // Load Textures for 3D Walking Pedestrians ("Gente Caminando") & Grand Trophy Showcase
+      const peopleLoader = new THREE.TextureLoader();
+      const maxAniso = renderer.capabilities.getMaxAnisotropy();
+      pedestriansTex = peopleLoader.load(REAL_PEOPLE_ASSETS.pedestriansSheetUrl, (loaded) => {
         loaded.colorSpace = THREE.SRGBColorSpace;
         loaded.anisotropy = maxAniso;
         loaded.needsUpdate = true;
-      },
-    );
-    grandTrophyTex.colorSpace = THREE.SRGBColorSpace;
+      });
+      pedestriansTex.colorSpace = THREE.SRGBColorSpace;
+
+      grandTrophyTex = peopleLoader.load(
+        REAL_PEOPLE_ASSETS.grandTrophyShowcaseUrl,
+        (loaded) => {
+          loaded.colorSpace = THREE.SRGBColorSpace;
+          loaded.anisotropy = maxAniso;
+          loaded.needsUpdate = true;
+        },
+      );
+      grandTrophyTex.colorSpace = THREE.SRGBColorSpace;
+
+      // Also prepare lightweight fallback scene geometry in case WebGL context is ever lost mid-race
+      fallbackSceneData = buildFallbackSceneData(map, allRoads, []);
+    } else {
+      // Built-in 3D Perspective Canvas Engine active immediately (zero WebGL required!)
+      ensureFallbackCanvas();
+      fallbackSceneData = buildFallbackSceneData(map, allRoads, colliders);
+    }
 
     // Helper: align finish arch with nearest road segment heading
     const findRoadHeadingAt = (px: number, pz: number): number => {
@@ -821,19 +960,25 @@ export const ThreeDrivingSimulator: React.FC<ThreeDrivingSimulatorProps> = ({
 
     // Populate ALL 3D Checkpoint Finish Stages simultaneously on the circuit
     const metaStages = map.checkpoints.map((cp, idx) => {
-      const stage = createCheckpointMetaStage3D(grandTrophyTex);
       const plan = getCheckpointAwardPlan(
         map.id,
         latestPropsRef.current.mapOrderIndex,
         idx,
         map.checkpoints.length,
       );
-      stage.configureForPlan(plan);
-      stage.group.position.set(cp.x, 0, cp.z);
-      stage.group.rotation.y = findRoadHeadingAt(cp.x, cp.z);
-      stage.setActiveTarget(idx === 0);
-      scene.add(stage.group);
-      return { stage, plan, cp };
+      const heading = findRoadHeadingAt(cp.x, cp.z);
+      const stage =
+        renderer && scene && grandTrophyTex
+          ? createCheckpointMetaStage3D(grandTrophyTex)
+          : null;
+      if (stage && scene) {
+        stage.configureForPlan(plan);
+        stage.group.position.set(cp.x, 0, cp.z);
+        stage.group.rotation.y = heading;
+        stage.setActiveTarget(idx === 0);
+        scene.add(stage.group);
+      }
+      return { stage, plan, cp, heading };
     });
 
     let configuredCpKey = '';
@@ -853,46 +998,77 @@ export const ThreeDrivingSimulator: React.FC<ThreeDrivingSimulatorProps> = ({
           metaStages.length,
         );
         metaStages[i].plan = refreshedPlan;
-        metaStages[i].stage.configureForPlan(refreshedPlan);
-        metaStages[i].stage.setActiveTarget(i === normIdx);
+        metaStages[i].stage?.configureForPlan(refreshedPlan);
+        metaStages[i].stage?.setActiveTarget(i === normIdx);
+        if (fallbackSceneData.checkpoints[i]) {
+          fallbackSceneData.checkpoints[i].isActive = i === normIdx;
+        }
       }
       activeAwardPlan = metaStages[normIdx].plan;
     };
     syncMetaStageToCheckpoint(p1PhysicsRef.current.checkpointIdx);
 
-    // Create Player 1 Vehicle Rig (Car, Cuatrimoto Eléctrica, Triciclo Eléctrico, Tuk Tuk, Bicicleta or Camión)
+    // Create Player 1 Vehicle Rig
     const p1Spec = getCarById(p1CarId);
-    const p1Rig = createRealisticCarRig(
-      p1Spec,
-      p1Paint,
-      texPack.contactShadow,
-      isSoftwareGl,
-      sessionMode !== 'SOLO' || driveMode === 'RACE_4MIN' ? p1Alias || 'Piloto 1' : undefined,
-      p1Spec.valueMessage,
-    );
-    scene.add(p1Rig.group);
-    const p1LabelSprite = p1Rig.group.getObjectByName('driverLabelSprite');
+    const p1Rig =
+      renderer && scene && texPack
+        ? createRealisticCarRig(
+            p1Spec,
+            p1Paint,
+            texPack.contactShadow,
+            isSoftwareGl,
+            sessionMode !== 'SOLO' || driveMode === 'RACE_4MIN' ? p1Alias || 'Piloto 1' : undefined,
+            p1Spec.valueMessage,
+          )
+        : null;
+    if (p1Rig && scene) {
+      scene.add(p1Rig.group);
+    }
+    const p1LabelSprite = p1Rig?.group.getObjectByName('driverLabelSprite');
 
     // Create Player 2 Vehicle Rig (visible in SPLIT_2P)
     const p2Spec = getCarById(p2CarId);
-    const p2Rig = createRealisticCarRig(
-      p2Spec,
-      p2Paint,
-      texPack.contactShadow,
-      isSoftwareGl,
-      p2Alias || 'Piloto 2',
-      p2Spec.valueMessage,
-    );
-    p2Rig.group.visible = sessionMode === 'SPLIT_2P';
-    scene.add(p2Rig.group);
+    const p2Rig =
+      renderer && scene && texPack
+        ? createRealisticCarRig(
+            p2Spec,
+            p2Paint,
+            texPack.contactShadow,
+            isSoftwareGl,
+            p2Alias || 'Piloto 2',
+            p2Spec.valueMessage,
+          )
+        : null;
+    if (p2Rig && scene) {
+      p2Rig.group.visible = sessionMode === 'SPLIT_2P';
+      scene.add(p2Rig.group);
+    }
 
     // 3D Overhead Route Guidance Arrows pointing to Next Meta (for P1 & P2)
-    const p1GuideArrow = createGuidanceArrowRig3D(0xfbbf24);
-    scene.add(p1GuideArrow.group);
-    const p2GuideArrow = createGuidanceArrowRig3D(0x38bdf8);
-    scene.add(p2GuideArrow.group);
+    const p1GuideArrow = renderer && scene ? createGuidanceArrowRig3D(0xfbbf24) : null;
+    if (p1GuideArrow && scene) scene.add(p1GuideArrow.group);
+    const p2GuideArrow = renderer && scene ? createGuidanceArrowRig3D(0x38bdf8) : null;
+    if (p2GuideArrow && scene) scene.add(p2GuideArrow.group);
 
-    // Create Live Traffic + Participating Race Vehicles (with 3D Avatars & Value Messages on Every Vehicle!)
+    const computeAgentPose = (
+      pts: RoadNode2D[],
+      segIdx: number,
+      tFrac: number,
+      laneOff: number,
+    ) => {
+      const a0 = pts[segIdx % pts.length];
+      const b0 = pts[(segIdx + 1) % pts.length];
+      const ax = THREE.MathUtils.lerp(a0.x, b0.x, tFrac);
+      const az = THREE.MathUtils.lerp(a0.z, b0.z, tFrac);
+      const hdg = Math.atan2(-(b0.x - a0.x), -(b0.z - a0.z));
+      return {
+        x: ax + Math.cos(hdg) * laneOff,
+        z: az - Math.sin(hdg) * laneOff,
+        heading: hdg,
+      };
+    };
+
+    // Create Live Traffic + Participating Race Vehicles
     const aiTraffic: TrafficAgent[] = [];
     const trafficBlueprints: Array<{
       id: CarModelId;
@@ -937,28 +1113,46 @@ export const ThreeDrivingSimulator: React.FC<ThreeDrivingSimulatorProps> = ({
         const road = candidateRoads[i % candidateRoads.length];
         const orderedPts = bp.reverse ? [...road.points].reverse() : road.points;
         const aiSpec = getCarById(bp.id);
-        const aiRig = createRealisticCarRig(
-          aiSpec,
-          bp.paint || aiSpec.defaultPaint,
-          texPack.contactShadow,
-          isSoftwareGl,
-          undefined,
-          aiSpec.valueMessage,
-        );
-        scene.add(aiRig.group);
+        const paintHex = bp.paint || aiSpec.defaultPaint;
+        const segIdx = i % Math.max(1, orderedPts.length - 1);
+        const tInit = (i * 0.17 + 0.14) % 0.88;
+        const laneOff = Math.min(bp.lane, road.width * 0.44);
+        const pose = computeAgentPose(orderedPts, segIdx, tInit, laneOff);
+
+        const aiRig =
+          renderer && scene && texPack
+            ? createRealisticCarRig(
+                aiSpec,
+                paintHex,
+                texPack.contactShadow,
+                isSoftwareGl,
+                undefined,
+                aiSpec.valueMessage,
+              )
+            : undefined;
+        if (aiRig && scene) {
+          aiRig.group.position.set(pose.x, 0.05, pose.z);
+          aiRig.group.rotation.y = pose.heading;
+          scene.add(aiRig.group);
+        }
         aiTraffic.push({
           rig: aiRig,
+          spec: aiSpec,
+          paintHex,
+          x: pose.x,
+          z: pose.z,
+          heading: pose.heading,
           path: orderedPts,
-          segIndex: i % Math.max(1, orderedPts.length - 1),
-          t: (i * 0.17 + 0.14) % 0.88,
+          segIndex: segIdx,
+          t: tInit,
           speed: bp.speed,
-          laneOffset: Math.min(bp.lane, road.width * 0.44),
+          laneOffset: laneOff,
           reverseDir: bp.reverse,
           pedalPhase: i * 1.3,
         });
       }
 
-      // Dedicated Companion Race Participants when in 4-Minute Add Time Race Mode ("se vea participar otros carros")
+      // Dedicated Companion Race Participants when in 4-Minute Add Time Race Mode
       if (driveMode === 'RACE_4MIN') {
         const raceLoopPath: RoadNode2D[] =
           map.checkpoints.length >= 3
@@ -979,20 +1173,36 @@ export const ThreeDrivingSimulator: React.FC<ThreeDrivingSimulatorProps> = ({
         ];
         participantRoster.forEach((rp, idx) => {
           const rpSpec = getCarById(rp.carId);
-          const rpRig = createRealisticCarRig(
-            rpSpec,
-            rp.paint,
-            texPack.contactShadow,
-            isSoftwareGl,
-            rp.alias,
-            rpSpec.valueMessage,
-          );
-          scene.add(rpRig.group);
+          const segIdx = idx % Math.max(1, raceLoopPath.length - 1);
+          const tInit = (0.06 + idx * 0.14) % 0.85;
+          const pose = computeAgentPose(raceLoopPath, segIdx, tInit, rp.lane);
+
+          const rpRig =
+            renderer && scene && texPack
+              ? createRealisticCarRig(
+                  rpSpec,
+                  rp.paint,
+                  texPack.contactShadow,
+                  isSoftwareGl,
+                  rp.alias,
+                  rpSpec.valueMessage,
+                )
+              : undefined;
+          if (rpRig && scene) {
+            rpRig.group.position.set(pose.x, 0.05, pose.z);
+            rpRig.group.rotation.y = pose.heading;
+            scene.add(rpRig.group);
+          }
           aiTraffic.push({
             rig: rpRig,
+            spec: rpSpec,
+            paintHex: rp.paint,
+            x: pose.x,
+            z: pose.z,
+            heading: pose.heading,
             path: raceLoopPath,
-            segIndex: idx % Math.max(1, raceLoopPath.length - 1),
-            t: (0.06 + idx * 0.14) % 0.85,
+            segIndex: segIdx,
+            t: tInit,
             speed: rp.speed,
             laneOffset: rp.lane,
             reverseDir: false,
@@ -1007,9 +1217,9 @@ export const ThreeDrivingSimulator: React.FC<ThreeDrivingSimulatorProps> = ({
       }
     }
 
-    // Create 3D Walking Pedestrians with Real Human Photographs strolling along sidewalks
+    // Create 3D Walking Pedestrians strolling along sidewalks
+    const pedShirtPalette = ['#ef4444', '#0284c7', '#f59e0b', '#10b981', '#8b5cf6', '#ec4899'];
     const pedestrians: PedestrianAgent[] = [];
-    // First place 4 immediate sidewalk pedestrians right ahead of the player spawn so they are visible from second 0
     const spawnSin = Math.sin(map.spawn.heading);
     const spawnCos = Math.cos(map.spawn.heading);
     const spawnFwdX = -spawnSin;
@@ -1021,20 +1231,29 @@ export const ThreeDrivingSimulator: React.FC<ThreeDrivingSimulatorProps> = ({
       const side = sIdx % 2 === 0 ? 1 : -1;
       const startAhead = 14 + sIdx * 9;
       const endAhead = startAhead + 36;
-      const actor = createWalkingPedestrian3D(
-        pedestriansTex,
-        texPack.contactShadow,
-        sIdx,
-      );
-      scene.add(actor.group);
+      const ax = map.spawn.x + spawnFwdX * startAhead + spawnRightX * side * mainRoadHalf;
+      const az = map.spawn.z + spawnFwdZ * startAhead + spawnRightZ * side * mainRoadHalf;
+      const bx = map.spawn.x + spawnFwdX * endAhead + spawnRightX * side * mainRoadHalf;
+      const bz = map.spawn.z + spawnFwdZ * endAhead + spawnRightZ * side * mainRoadHalf;
+      const tInit = 0.2 + ((sIdx * 0.2) % 0.65);
+      const dirInit: 1 | -1 = sIdx % 2 === 0 ? 1 : -1;
+      const actor =
+        renderer && scene && texPack && pedestriansTex
+          ? createWalkingPedestrian3D(pedestriansTex, texPack.contactShadow, sIdx)
+          : undefined;
+      if (actor && scene) scene.add(actor.group);
       pedestrians.push({
         actor,
-        ax: map.spawn.x + spawnFwdX * startAhead + spawnRightX * side * mainRoadHalf,
-        az: map.spawn.z + spawnFwdZ * startAhead + spawnRightZ * side * mainRoadHalf,
-        bx: map.spawn.x + spawnFwdX * endAhead + spawnRightX * side * mainRoadHalf,
-        bz: map.spawn.z + spawnFwdZ * endAhead + spawnRightZ * side * mainRoadHalf,
-        t: 0.2 + (sIdx * 0.2) % 0.65,
-        dir: sIdx % 2 === 0 ? 1 : -1,
+        x: THREE.MathUtils.lerp(ax, bx, tInit),
+        z: THREE.MathUtils.lerp(az, bz, tInit),
+        heading: Math.atan2(-(bx - ax) * dirInit, -(bz - az) * dirInit),
+        shirtColor: pedShirtPalette[sIdx % pedShirtPalette.length],
+        ax,
+        az,
+        bx,
+        bz,
+        t: tInit,
+        dir: dirInit,
         speed: 1.32 + (sIdx % 3) * 0.18,
         walkPhase: sIdx * 1.15,
       });
@@ -1057,20 +1276,29 @@ export const ThreeDrivingSimulator: React.FC<ThreeDrivingSimulatorProps> = ({
           for (const side of [-1, 1] as const) {
             if (pedCount >= maxPeds) break;
             const sidewalkDist = road.width * 0.5 + 1.35;
-            const actor = createWalkingPedestrian3D(
-              pedestriansTex,
-              texPack.contactShadow,
-              pedCount,
-            );
-            scene.add(actor.group);
+            const ax = a.x + nx * side * sidewalkDist;
+            const az = a.z + nz * side * sidewalkDist;
+            const bx = b.x + nx * side * sidewalkDist;
+            const bz = b.z + nz * side * sidewalkDist;
+            const tInit = (pedCount * 0.19) % 0.92;
+            const dirInit: 1 | -1 = pedCount % 2 === 0 ? 1 : -1;
+            const actor =
+              renderer && scene && texPack && pedestriansTex
+                ? createWalkingPedestrian3D(pedestriansTex, texPack.contactShadow, pedCount)
+                : undefined;
+            if (actor && scene) scene.add(actor.group);
             pedestrians.push({
               actor,
-              ax: a.x + nx * side * sidewalkDist,
-              az: a.z + nz * side * sidewalkDist,
-              bx: b.x + nx * side * sidewalkDist,
-              bz: b.z + nz * side * sidewalkDist,
-              t: (pedCount * 0.19) % 0.92,
-              dir: pedCount % 2 === 0 ? 1 : -1,
+              x: THREE.MathUtils.lerp(ax, bx, tInit),
+              z: THREE.MathUtils.lerp(az, bz, tInit),
+              heading: Math.atan2(-(bx - ax) * dirInit, -(bz - az) * dirInit),
+              shirtColor: pedShirtPalette[pedCount % pedShirtPalette.length],
+              ax,
+              az,
+              bx,
+              bz,
+              t: tInit,
+              dir: dirInit,
               speed: 1.25 + (pedCount % 4) * 0.22,
               walkPhase: pedCount * 0.9,
             });
@@ -1080,10 +1308,21 @@ export const ThreeDrivingSimulator: React.FC<ThreeDrivingSimulatorProps> = ({
       }
     }
 
-    // Dynamic Map of Remote Online Multiplayer Car Rigs (with Overhead Chosen Player Name + Chosen Transport + Value Motto)
+    // Dynamic Map of Remote Online Multiplayer Car Rigs
     const remoteRigs = new Map<
       string,
-      { rig: CarRig3D; carId: CarModelId; alias: string; paintHex: string; valueMessage?: string }
+      {
+        rig?: CarRig3D;
+        spec: CarSpec;
+        carId: CarModelId;
+        alias: string;
+        paintHex: string;
+        valueMessage?: string;
+        x: number;
+        z: number;
+        heading: number;
+        steerAngle: number;
+      }
     >();
 
     const buildAndEmitAllWinSummary = () => {
@@ -1151,9 +1390,13 @@ export const ThreeDrivingSimulator: React.FC<ThreeDrivingSimulatorProps> = ({
       props.onRaceAllWinSummary?.(participants, Math.max(1, Math.round(p1.lapTimeSec)));
     };
 
-    // Pre-compile shaders on hardware GPU
-    if (!isSoftwareGl) {
-      renderer.compile(scene, cam1);
+    // Pre-compile shaders on hardware GPU safely
+    if (renderer && scene && !isSoftwareGl) {
+      try {
+        renderer.compile(scene, cam1);
+      } catch {
+        // Ignore shader pre-warm quirks on custom GPU drivers
+      }
     }
 
     // Keyboard State Tracking
@@ -1199,9 +1442,13 @@ export const ThreeDrivingSimulator: React.FC<ThreeDrivingSimulatorProps> = ({
 
     const onResize = () => {
       if (!container) return;
-      const w = container.clientWidth || window.innerWidth;
-      const h = container.clientHeight || window.innerHeight;
-      renderer.setSize(w, h);
+      const w = Math.max(2, container.clientWidth || window.innerWidth || 1280);
+      const h = Math.max(2, container.clientHeight || window.innerHeight || 720);
+      renderer?.setSize(w, h);
+      if (fallbackCanvas) {
+        fallbackCanvas.width = w;
+        fallbackCanvas.height = h;
+      }
     };
     window.addEventListener('resize', onResize);
 
@@ -1427,24 +1674,36 @@ export const ThreeDrivingSimulator: React.FC<ThreeDrivingSimulatorProps> = ({
     let prevTod = latestPropsRef.current.timeOfDay;
 
     function afterDraw(cb: () => void) {
-      const gl = renderer.getContext() as WebGL2RenderingContext;
-      if (!gl || typeof gl.fenceSync !== 'function') {
-        frameId = window.setTimeout(cb, 32);
+      if (!renderer) {
+        frameId = requestAnimationFrame(cb);
         return;
       }
-      const sync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
-      gl.flush();
-      const poll = () => {
-        if (unmounted) return;
-        const state = sync && gl.getSyncParameter(sync, gl.SYNC_STATUS);
-        if (state === gl.UNSIGNALED) {
+      try {
+        const gl = renderer.getContext() as WebGL2RenderingContext;
+        if (!gl || gl.isContextLost() || typeof gl.fenceSync !== 'function') {
+          frameId = window.setTimeout(cb, 32);
+          return;
+        }
+        const sync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
+        if (sync) {
+          gl.flush();
+          const poll = () => {
+            if (unmounted) return;
+            const state = gl.getSyncParameter(sync, gl.SYNC_STATUS);
+            if (state === gl.UNSIGNALED) {
+              frameId = window.setTimeout(poll, 4);
+            } else {
+              gl.deleteSync(sync);
+              frameId = window.setTimeout(cb, 28);
+            }
+          };
           frameId = window.setTimeout(poll, 4);
         } else {
-          if (sync) gl.deleteSync(sync);
           frameId = window.setTimeout(cb, 28);
         }
-      };
-      frameId = window.setTimeout(poll, 4);
+      } catch {
+        frameId = window.setTimeout(cb, 32);
+      }
     }
 
     function tick() {
@@ -1529,7 +1788,7 @@ export const ThreeDrivingSimulator: React.FC<ThreeDrivingSimulatorProps> = ({
           syncMetaStageToCheckpoint(p1.checkpointIdx);
           const animTime = now * 0.001;
           for (let mIdx = 0; mIdx < metaStages.length; mIdx++) {
-            metaStages[mIdx].stage.updateAnimation(animTime + mIdx * 0.7);
+            metaStages[mIdx].stage?.updateAnimation(animTime + mIdx * 0.7);
           }
 
           const activeEntry = metaStages[p1.checkpointIdx % metaStages.length];
@@ -1585,7 +1844,7 @@ export const ThreeDrivingSimulator: React.FC<ThreeDrivingSimulatorProps> = ({
 
         // Player 2 Physics & Checkpoint Detection in Split-Screen 2P Mode (Arrow Keys + RightShift)
         if (props.sessionMode === 'SPLIT_2P') {
-          p2Rig.group.visible = true;
+          if (p2Rig) p2Rig.group.visible = true;
           const p2Throttle = keys.has('ArrowUp') ? 1 : 0;
           const p2Brake = keys.has('ArrowDown') ? 1 : 0;
           let p2Steer = 0;
@@ -1609,7 +1868,7 @@ export const ThreeDrivingSimulator: React.FC<ThreeDrivingSimulatorProps> = ({
             }
           }
         } else {
-          p2Rig.group.visible = false;
+          if (p2Rig) p2Rig.group.visible = false;
         }
 
         // Step Live Street Traffic & Companion Race Participants
@@ -1631,24 +1890,30 @@ export const ThreeDrivingSimulator: React.FC<ThreeDrivingSimulatorProps> = ({
           const ax = THREE.MathUtils.lerp(a2.x, b2.x, agent.t);
           const az = THREE.MathUtils.lerp(a2.z, b2.z, agent.t);
           const heading = Math.atan2(-(b2.x - a2.x), -(b2.z - a2.z));
-          // Right-hand lane offset relative to travel direction
           const rightX = Math.cos(heading) * agent.laneOffset;
           const rightZ = -Math.sin(heading) * agent.laneOffset;
-          agent.rig.group.position.set(ax + rightX, 0.05, az + rightZ);
-          agent.rig.group.rotation.y = heading;
-          agent.rig.wheelMeshes.forEach((w) => {
-            w.rotation.x -= agent.speed * dt * 2.2;
-          });
-          if (agent.rig.cyclistLegs) {
-            agent.pedalPhase += agent.speed * dt * 1.45;
-            agent.rig.cyclistLegs.crank.rotation.x -= agent.speed * dt * 2.4;
-            agent.rig.cyclistLegs.left.rotation.x = -0.35 + Math.sin(agent.pedalPhase) * 0.42;
-            agent.rig.cyclistLegs.right.rotation.x = -0.35 - Math.sin(agent.pedalPhase) * 0.42;
+          agent.x = ax + rightX;
+          agent.z = az + rightZ;
+          agent.heading = heading;
+
+          if (agent.rig) {
+            agent.rig.group.position.set(agent.x, 0.05, agent.z);
+            agent.rig.group.rotation.y = heading;
+            agent.rig.wheelMeshes.forEach((w) => {
+              w.rotation.x -= agent.speed * dt * 2.2;
+            });
+            if (agent.rig.cyclistLegs) {
+              agent.pedalPhase += agent.speed * dt * 1.45;
+              agent.rig.cyclistLegs.crank.rotation.x -= agent.speed * dt * 2.4;
+              agent.rig.cyclistLegs.left.rotation.x = -0.35 + Math.sin(agent.pedalPhase) * 0.42;
+              agent.rig.cyclistLegs.right.rotation.x = -0.35 - Math.sin(agent.pedalPhase) * 0.42;
+            }
           }
         }
 
-        // Step 3D Walking Pedestrians with Real Human Photographs along sidewalks
-        for (const ped of pedestrians) {
+        // Step 3D Walking Pedestrians along sidewalks
+        for (let pIdx = 0; pIdx < pedestrians.length; pIdx++) {
+          const ped = pedestrians[pIdx];
           const segLen = Math.max(1, Math.hypot(ped.bx - ped.ax, ped.bz - ped.az));
           ped.t += (ped.dir * ped.speed * dt) / segLen;
           if (ped.t >= 0.96) {
@@ -1663,15 +1928,20 @@ export const ThreeDrivingSimulator: React.FC<ThreeDrivingSimulatorProps> = ({
           const vx = (ped.bx - ped.ax) * ped.dir;
           const vz = (ped.bz - ped.az) * ped.dir;
           const pedHeading = Math.atan2(-vx, -vz);
-          ped.actor.group.position.x = px;
-          ped.actor.group.position.z = pz;
-          ped.actor.group.rotation.y = pedHeading;
+          ped.x = px;
+          ped.z = pz;
+          ped.heading = pedHeading;
           ped.walkPhase += ped.speed * dt * 4.8;
-          ped.actor.updateWalk(ped.walkPhase);
+          if (ped.actor) {
+            ped.actor.group.position.x = px;
+            ped.actor.group.position.z = pz;
+            ped.actor.group.rotation.y = pedHeading;
+            ped.actor.updateWalk(ped.walkPhase);
+          }
         }
         // Animate Sky Pajaritos + Moving Water Waves & Volcano Plumes
         const animSec = now * 0.001;
-        wildlifeHandle.update(animSec, dt);
+        wildlifeHandle?.update(animSec, dt);
         scenicWorld?.update(animSec, dt);
 
         // Gentle Ambient Songbird ("Pajaritos") Melodies
@@ -1683,10 +1953,10 @@ export const ThreeDrivingSimulator: React.FC<ThreeDrivingSimulatorProps> = ({
         }
       } else {
         const animTime = now * 0.001;
-        wildlifeHandle.update(animTime, dt);
+        wildlifeHandle?.update(animTime, dt);
         scenicWorld?.update(animTime, dt);
         for (let mIdx = 0; mIdx < metaStages.length; mIdx++) {
-          metaStages[mIdx].stage.updateAnimation(animTime + mIdx * 0.7);
+          metaStages[mIdx].stage?.updateAnimation(animTime + mIdx * 0.7);
         }
         soundEngine.stopSilence();
       }
@@ -1696,66 +1966,77 @@ export const ThreeDrivingSimulator: React.FC<ThreeDrivingSimulatorProps> = ({
         map.houseStyle === 'colonial_gt' && Math.abs(p1.speedMs) > 2
           ? Math.sin(now * 0.045) * 0.012
           : 0;
-      p1Rig.group.position.set(p1.x, 0.05 + cobbleVibration, p1.z);
-      p1Rig.group.rotation.y = p1.heading;
-      p1Rig.frontLeftPivot.rotation.y = p1.steerNorm * 0.52;
-      p1Rig.frontRightPivot.rotation.y = p1.steerNorm * 0.52;
-      p1Rig.cockpitWheel.rotation.z = p1.steerNorm * 3.2;
-      if (p1LabelSprite) {
-        p1LabelSprite.visible = props.cameraMode !== 'COCKPIT';
+      const p1Braking = keys.has('KeyS') || virtualInputRef.current.brake;
+      if (p1Rig) {
+        p1Rig.group.position.set(p1.x, 0.05 + cobbleVibration, p1.z);
+        p1Rig.group.rotation.y = p1.heading;
+        p1Rig.frontLeftPivot.rotation.y = p1.steerNorm * 0.52;
+        p1Rig.frontRightPivot.rotation.y = p1.steerNorm * 0.52;
+        p1Rig.cockpitWheel.rotation.z = p1.steerNorm * 3.2;
+        if (p1LabelSprite) {
+          p1LabelSprite.visible = props.cameraMode !== 'COCKPIT';
+        }
+        p1Rig.wheelMeshes.forEach((wm) => {
+          wm.rotation.x -= p1.speedMs * dt * 2.8;
+        });
+        if (p1Rig.cyclistLegs) {
+          const pPhase = now * 0.008 * Math.max(0.2, Math.abs(p1.speedMs));
+          p1Rig.cyclistLegs.crank.rotation.x -= p1.speedMs * dt * 2.6;
+          p1Rig.cyclistLegs.left.rotation.x =
+            Math.abs(p1.speedMs) > 0.25 ? -0.35 + Math.sin(pPhase) * 0.44 : -0.25;
+          p1Rig.cyclistLegs.right.rotation.x =
+            Math.abs(p1.speedMs) > 0.25 ? -0.35 - Math.sin(pPhase) * 0.44 : -0.45;
+        }
+        p1Rig.brakeLights.emissiveIntensity = p1Braking ? 2.6 : 0.7;
       }
-      p1Rig.wheelMeshes.forEach((wm) => {
-        wm.rotation.x -= p1.speedMs * dt * 2.8;
-      });
-      if (p1Rig.cyclistLegs) {
-        const pPhase = now * 0.008 * Math.max(0.2, Math.abs(p1.speedMs));
-        p1Rig.cyclistLegs.crank.rotation.x -= p1.speedMs * dt * 2.6;
-        p1Rig.cyclistLegs.left.rotation.x =
-          Math.abs(p1.speedMs) > 0.25 ? -0.35 + Math.sin(pPhase) * 0.44 : -0.25;
-        p1Rig.cyclistLegs.right.rotation.x =
-          Math.abs(p1.speedMs) > 0.25 ? -0.35 - Math.sin(pPhase) * 0.44 : -0.45;
-      }
-      p1Rig.brakeLights.emissiveIntensity =
-        keys.has('KeyS') || virtualInputRef.current.brake ? 2.6 : 0.7;
 
-      // Update 3D Overhead Route Guidance Arrows toward Active Meta ("todos puedan guiarse para llegar a la meta")
+      // Update 3D Overhead Route Guidance Arrows toward Active Meta
       const activeP1Cp =
         metaStages.length > 0 ? metaStages[p1.checkpointIdx % metaStages.length].cp : null;
-      if (activeP1Cp && props.driveMode === 'RACE_4MIN' && props.cameraMode !== 'COCKPIT') {
-        p1GuideArrow.update(p1.x, p1.z, activeP1Cp.x, activeP1Cp.z, now * 0.001, true);
-      } else {
-        p1GuideArrow.update(p1.x, p1.z, p1.x, p1.z, now * 0.001, false);
+      const showP1Guide = Boolean(
+        activeP1Cp && props.driveMode === 'RACE_4MIN' && props.cameraMode !== 'COCKPIT',
+      );
+      if (p1GuideArrow) {
+        if (activeP1Cp && showP1Guide) {
+          p1GuideArrow.update(p1.x, p1.z, activeP1Cp.x, activeP1Cp.z, now * 0.001, true);
+        } else {
+          p1GuideArrow.update(p1.x, p1.z, p1.x, p1.z, now * 0.001, false);
+        }
       }
 
       // Sync Player 2 Visual Mesh & 3D Route Guidance Arrow
+      const activeP2Cp =
+        metaStages.length > 0 ? metaStages[p2.checkpointIdx % metaStages.length].cp : null;
       if (props.sessionMode === 'SPLIT_2P') {
-        p2Rig.group.position.set(p2.x, 0.05, p2.z);
-        p2Rig.group.rotation.y = p2.heading;
-        p2Rig.frontLeftPivot.rotation.y = p2.steerNorm * 0.52;
-        p2Rig.frontRightPivot.rotation.y = p2.steerNorm * 0.52;
-        p2Rig.wheelMeshes.forEach((wm) => {
-          wm.rotation.x -= p2.speedMs * dt * 2.8;
-        });
-        if (p2Rig.cyclistLegs) {
-          const p2Phase = now * 0.008 * Math.max(0.2, Math.abs(p2.speedMs));
-          p2Rig.cyclistLegs.crank.rotation.x -= p2.speedMs * dt * 2.6;
-          p2Rig.cyclistLegs.left.rotation.x =
-            Math.abs(p2.speedMs) > 0.25 ? -0.35 + Math.sin(p2Phase) * 0.44 : -0.25;
-          p2Rig.cyclistLegs.right.rotation.x =
-            Math.abs(p2.speedMs) > 0.25 ? -0.35 - Math.sin(p2Phase) * 0.44 : -0.45;
+        if (p2Rig) {
+          p2Rig.group.position.set(p2.x, 0.05, p2.z);
+          p2Rig.group.rotation.y = p2.heading;
+          p2Rig.frontLeftPivot.rotation.y = p2.steerNorm * 0.52;
+          p2Rig.frontRightPivot.rotation.y = p2.steerNorm * 0.52;
+          p2Rig.wheelMeshes.forEach((wm) => {
+            wm.rotation.x -= p2.speedMs * dt * 2.8;
+          });
+          if (p2Rig.cyclistLegs) {
+            const p2Phase = now * 0.008 * Math.max(0.2, Math.abs(p2.speedMs));
+            p2Rig.cyclistLegs.crank.rotation.x -= p2.speedMs * dt * 2.6;
+            p2Rig.cyclistLegs.left.rotation.x =
+              Math.abs(p2.speedMs) > 0.25 ? -0.35 + Math.sin(p2Phase) * 0.44 : -0.25;
+            p2Rig.cyclistLegs.right.rotation.x =
+              Math.abs(p2.speedMs) > 0.25 ? -0.35 - Math.sin(p2Phase) * 0.44 : -0.45;
+          }
         }
-        const activeP2Cp =
-          metaStages.length > 0 ? metaStages[p2.checkpointIdx % metaStages.length].cp : null;
-        if (activeP2Cp && props.driveMode === 'RACE_4MIN') {
-          p2GuideArrow.update(p2.x, p2.z, activeP2Cp.x, activeP2Cp.z, now * 0.001 + 0.5, true);
-        } else {
-          p2GuideArrow.update(p2.x, p2.z, p2.x, p2.z, now * 0.001, false);
+        if (p2GuideArrow) {
+          if (activeP2Cp && props.driveMode === 'RACE_4MIN') {
+            p2GuideArrow.update(p2.x, p2.z, activeP2Cp.x, activeP2Cp.z, now * 0.001 + 0.5, true);
+          } else {
+            p2GuideArrow.update(p2.x, p2.z, p2.x, p2.z, now * 0.001, false);
+          }
         }
       } else {
-        p2GuideArrow.update(p2.x, p2.z, p2.x, p2.z, now * 0.001, false);
+        p2GuideArrow?.update(p2.x, p2.z, p2.x, p2.z, now * 0.001, false);
       }
 
-      // Reconcile & Smoothly Interpolate Online Multiplayer Peers (Chosen Alias + Chosen Transport Overhead!)
+      // Reconcile & Smoothly Interpolate Online Multiplayer Peers
       const activePeers = remotePlayersRef.current;
       for (const [peerId, peer] of activePeers.entries()) {
         let entry = remoteRigs.get(peerId);
@@ -1766,55 +2047,69 @@ export const ThreeDrivingSimulator: React.FC<ThreeDrivingSimulatorProps> = ({
           entry.paintHex !== peer.paintHex ||
           entry.valueMessage !== peer.valueMessage
         ) {
-          if (entry) {
+          if (entry?.rig && scene) {
             scene.remove(entry.rig.group);
             entry.rig.dispose();
           }
           const peerSpec = getCarById(peer.carId);
-          const rig = createRealisticCarRig(
-            peerSpec,
-            peer.paintHex || peerSpec.defaultPaint,
-            texPack.contactShadow,
-            isSoftwareGl,
-            peer.alias || 'Piloto en Línea',
-            peer.valueMessage || peerSpec.valueMessage,
-          );
-          rig.group.position.set(peer.x, 0.05, peer.z);
-          rig.group.rotation.y = peer.heading;
-          scene.add(rig.group);
+          const rig =
+            renderer && scene && texPack
+              ? createRealisticCarRig(
+                  peerSpec,
+                  peer.paintHex || peerSpec.defaultPaint,
+                  texPack.contactShadow,
+                  isSoftwareGl,
+                  peer.alias || 'Piloto en Línea',
+                  peer.valueMessage || peerSpec.valueMessage,
+                )
+              : undefined;
+          if (rig && scene) {
+            rig.group.position.set(peer.x, 0.05, peer.z);
+            rig.group.rotation.y = peer.heading;
+            scene.add(rig.group);
+          }
           entry = {
             rig,
+            spec: peerSpec,
             carId: peer.carId,
-            alias: peer.alias,
-            paintHex: peer.paintHex,
-            valueMessage: peer.valueMessage,
+            alias: peer.alias || 'Piloto en Línea',
+            paintHex: peer.paintHex || peerSpec.defaultPaint,
+            valueMessage: peer.valueMessage || peerSpec.valueMessage,
+            x: peer.x,
+            z: peer.z,
+            heading: peer.heading,
+            steerAngle: peer.steerAngle,
           };
           remoteRigs.set(peerId, entry);
         }
 
-        entry.rig.group.position.x = THREE.MathUtils.damp(entry.rig.group.position.x, peer.x, 10, dt);
-        entry.rig.group.position.z = THREE.MathUtils.damp(entry.rig.group.position.z, peer.z, 10, dt);
-        entry.rig.group.rotation.y = THREE.MathUtils.damp(
-          entry.rig.group.rotation.y,
-          peer.heading,
-          10,
-          dt,
-        );
-        entry.rig.frontLeftPivot.rotation.y = peer.steerAngle * 0.5;
-        entry.rig.frontRightPivot.rotation.y = peer.steerAngle * 0.5;
-        entry.rig.wheelMeshes.forEach((wm) => {
-          wm.rotation.x -= (peer.speedKmh / 3.6) * dt * 2.5;
-        });
-        if (entry.rig.cyclistLegs) {
-          const peerPhase = now * 0.006 * Math.max(0.2, peer.speedKmh / 3.6);
-          entry.rig.cyclistLegs.left.rotation.x = -0.35 + Math.sin(peerPhase) * 0.4;
-          entry.rig.cyclistLegs.right.rotation.x = -0.35 - Math.sin(peerPhase) * 0.4;
+        entry.x = THREE.MathUtils.damp(entry.x, peer.x, 10, dt);
+        entry.z = THREE.MathUtils.damp(entry.z, peer.z, 10, dt);
+        entry.heading = THREE.MathUtils.damp(entry.heading, peer.heading, 10, dt);
+        entry.steerAngle = peer.steerAngle;
+
+        if (entry.rig) {
+          entry.rig.group.position.x = entry.x;
+          entry.rig.group.position.z = entry.z;
+          entry.rig.group.rotation.y = entry.heading;
+          entry.rig.frontLeftPivot.rotation.y = peer.steerAngle * 0.5;
+          entry.rig.frontRightPivot.rotation.y = peer.steerAngle * 0.5;
+          entry.rig.wheelMeshes.forEach((wm) => {
+            wm.rotation.x -= (peer.speedKmh / 3.6) * dt * 2.5;
+          });
+          if (entry.rig.cyclistLegs) {
+            const peerPhase = now * 0.006 * Math.max(0.2, peer.speedKmh / 3.6);
+            entry.rig.cyclistLegs.left.rotation.x = -0.35 + Math.sin(peerPhase) * 0.4;
+            entry.rig.cyclistLegs.right.rotation.x = -0.35 - Math.sin(peerPhase) * 0.4;
+          }
         }
       }
       for (const [peerId, entry] of remoteRigs.entries()) {
         if (!activePeers.has(peerId)) {
-          scene.remove(entry.rig.group);
-          entry.rig.dispose();
+          if (entry.rig && scene) {
+            scene.remove(entry.rig.group);
+            entry.rig.dispose();
+          }
           remoteRigs.delete(peerId);
         }
       }
@@ -1827,7 +2122,6 @@ export const ThreeDrivingSimulator: React.FC<ThreeDrivingSimulatorProps> = ({
 
       let targetFov = 60;
       if (props.cameraMode === 'COCKPIT') {
-        // Real 1st-person seat tailored to Car, Electric Quad/Trike, Pickup 4x4, Tuk Tuk, Bicicleta or Heavy Camión
         const isCenterRider =
           p1Spec.bodyStyle === 'tuk_tuk' ||
           p1Spec.bodyStyle === 'bicycle' ||
@@ -1887,7 +2181,6 @@ export const ThreeDrivingSimulator: React.FC<ThreeDrivingSimulatorProps> = ({
           _camIdealLook.set(p1.x - sinH * 7, 0.25, p1.z - cosH * 7);
           targetFov = 58;
         } else {
-          // Fixed chase distance (7.6m) & fixed FOV (60°) so steering or accelerating NEVER zooms the screen in and out
           const chaseDist = 7.6;
           _camIdealPos.set(p1.x + sinH * chaseDist, 2.85, p1.z + cosH * chaseDist);
           _camIdealLook.set(p1.x - sinH * 6.5, 1.1, p1.z - cosH * 6.5);
@@ -1910,61 +2203,284 @@ export const ThreeDrivingSimulator: React.FC<ThreeDrivingSimulatorProps> = ({
           THREE.MathUtils.lerp(skyY, _camIdealPos.y, ease),
           THREE.MathUtils.lerp(p1.z + cosH * skyBack, _camIdealPos.z, ease),
         );
-        cam1.lookAt(
+        _cam1LookActual.set(
           THREE.MathUtils.lerp(p1.x, _camIdealLook.x, ease),
           THREE.MathUtils.lerp(0, _camIdealLook.y, ease),
           THREE.MathUtils.lerp(p1.z, _camIdealLook.z, ease),
         );
+        cam1.lookAt(_cam1LookActual);
       } else if (props.cameraMode === 'COCKPIT' || (props.cameraMode === 'AERIAL' && realMapOverlayMode)) {
         cam1.position.copy(_camIdealPos);
-        cam1.lookAt(_camIdealLook);
+        _cam1LookActual.copy(_camIdealLook);
+        cam1.lookAt(_cam1LookActual);
       } else if (props.cameraMode === 'AERIAL') {
         cam1.position.lerp(_camIdealPos, 1 - Math.exp(-9 * dt));
-        cam1.lookAt(_camIdealLook);
+        _cam1LookActual.copy(_camIdealLook);
+        cam1.lookAt(_cam1LookActual);
       } else {
-        // Lock camera rigidly at exact 7.6m distance behind vehicle so turning never shortens chord distance (zero zoom!)
         cam1.position.copy(_camIdealPos);
-        cam1.lookAt(_camIdealLook);
+        _cam1LookActual.copy(_camIdealLook);
+        cam1.lookAt(_cam1LookActual);
       }
 
-      // Render Full Viewport OR Dual Split-Screen Viewport (2 Usuarios Local)
-      const cw = container?.clientWidth || window.innerWidth;
-      const ch = container?.clientHeight || window.innerHeight;
+      // Render Full Viewport OR Dual Split-Screen Viewport (WebGL2 if available, else Built-in 3D Perspective Canvas Engine!)
+      const cw = Math.max(2, container?.clientWidth || window.innerWidth || 1280);
+      const ch = Math.max(2, container?.clientHeight || window.innerHeight || 720);
 
-      if (props.sessionMode === 'SPLIT_2P') {
-        const halfW = Math.floor(cw / 2);
-        renderer.setScissorTest(true);
+      if (renderer && scene && !contextLost) {
+        try {
+          if (props.sessionMode === 'SPLIT_2P') {
+            const halfW = Math.max(1, Math.floor(cw / 2));
+            renderer.setScissorTest(true);
 
-        // Left Viewport: Player 1
-        cam1.aspect = halfW / ch;
-        cam1.updateProjectionMatrix();
-        renderer.setViewport(0, 0, halfW - 1, ch);
-        renderer.setScissor(0, 0, halfW - 1, ch);
-        renderer.render(scene, cam1);
+            // Left Viewport: Player 1
+            cam1.aspect = halfW / ch;
+            cam1.updateProjectionMatrix();
+            renderer.setViewport(0, 0, Math.max(1, halfW - 1), ch);
+            renderer.setScissor(0, 0, Math.max(1, halfW - 1), ch);
+            renderer.render(scene, cam1);
 
-        // Right Viewport: Player 2
-        const sinH2 = Math.sin(p2.heading);
-        const cosH2 = Math.cos(p2.heading);
-        _p2CamIdealPos.set(p2.x + sinH2 * 7.6, 2.9, p2.z + cosH2 * 7.6);
-        cam2.position.lerp(_p2CamIdealPos, 1 - Math.exp(-9.5 * dt));
-        _p2CamIdealLook.set(p2.x - sinH2 * 6.5, 1.1, p2.z - cosH2 * 6.5);
-        cam2.lookAt(_p2CamIdealLook);
-        cam2.aspect = (cw - halfW) / ch;
-        cam2.updateProjectionMatrix();
+            // Right Viewport: Player 2
+            const sinH2 = Math.sin(p2.heading);
+            const cosH2 = Math.cos(p2.heading);
+            _p2CamIdealPos.set(p2.x + sinH2 * 7.6, 2.9, p2.z + cosH2 * 7.6);
+            cam2.position.lerp(_p2CamIdealPos, 1 - Math.exp(-9.5 * dt));
+            _p2CamIdealLook.set(p2.x - sinH2 * 6.5, 1.1, p2.z - cosH2 * 6.5);
+            cam2.lookAt(_p2CamIdealLook);
+            cam2.aspect = Math.max(1, cw - halfW) / ch;
+            cam2.updateProjectionMatrix();
 
-        renderer.setViewport(halfW + 1, 0, cw - halfW - 1, ch);
-        renderer.setScissor(halfW + 1, 0, cw - halfW - 1, ch);
-        renderer.render(scene, cam2);
+            renderer.setViewport(halfW + 1, 0, Math.max(1, cw - halfW - 1), ch);
+            renderer.setScissor(halfW + 1, 0, Math.max(1, cw - halfW - 1), ch);
+            renderer.render(scene, cam2);
 
-        renderer.setScissorTest(false);
-      } else {
-        renderer.setScissorTest(false);
-        if (Math.abs(cam1.aspect - cw / ch) > 0.01) {
-          cam1.aspect = cw / ch;
-          cam1.updateProjectionMatrix();
+            renderer.setScissorTest(false);
+          } else {
+            renderer.setScissorTest(false);
+            if (Math.abs(cam1.aspect - cw / ch) > 0.01) {
+              cam1.aspect = cw / ch;
+              cam1.updateProjectionMatrix();
+            }
+            renderer.setViewport(0, 0, cw, ch);
+            renderer.render(scene, cam1);
+          }
+        } catch {
+          renderer.setScissorTest(false);
+          contextLost = true;
         }
-        renderer.setViewport(0, 0, cw, ch);
-        renderer.render(scene, cam1);
+      } else {
+        const ctx2d = ensureFallbackCanvas();
+        if (ctx2d && fallbackCanvas) {
+          if (fallbackCanvas.width !== cw || fallbackCanvas.height !== ch) {
+            fallbackCanvas.width = cw;
+            fallbackCanvas.height = ch;
+          }
+
+          // Sync live pedestrian positions into fallbackSceneData
+          fallbackSceneData.pedestrians = pedestrians.map((pd) => ({
+            x: pd.x,
+            z: pd.z,
+            heading: pd.heading,
+            walkPhase: pd.walkPhase,
+            shirtColor: pd.shirtColor,
+          }));
+
+          const fallbackVehicles: FallbackVehicleActor[] = [
+            {
+              x: p1.x,
+              y: 0.05 + cobbleVibration,
+              z: p1.z,
+              heading: p1.heading,
+              steerNorm: p1.steerNorm,
+              speedMs: p1.speedMs,
+              spec: p1Spec,
+              paintHex: p1Paint,
+              alias:
+                props.sessionMode !== 'SOLO' || props.driveMode === 'RACE_4MIN'
+                  ? props.p1Alias || 'Piloto 1'
+                  : undefined,
+              valueMessage: p1Spec.valueMessage,
+              braking: p1Braking,
+              hideMeshForCockpit: props.cameraMode === 'COCKPIT',
+            },
+          ];
+
+          if (props.sessionMode === 'SPLIT_2P') {
+            fallbackVehicles.push({
+              x: p2.x,
+              y: 0.05,
+              z: p2.z,
+              heading: p2.heading,
+              steerNorm: p2.steerNorm,
+              speedMs: p2.speedMs,
+              spec: p2Spec,
+              paintHex: p2Paint,
+              alias: props.p2Alias || 'Piloto 2',
+              valueMessage: p2Spec.valueMessage,
+              braking: keys.has('ArrowDown'),
+            });
+          }
+
+          for (const ag of aiTraffic) {
+            fallbackVehicles.push({
+              x: ag.x,
+              y: 0.05,
+              z: ag.z,
+              heading: ag.heading,
+              steerNorm: 0,
+              speedMs: ag.speed,
+              spec: ag.spec,
+              paintHex: ag.paintHex,
+              alias: ag.alias,
+              valueMessage: ag.valueMessage || ag.spec.valueMessage,
+            });
+          }
+
+          for (const peer of remoteRigs.values()) {
+            fallbackVehicles.push({
+              x: peer.x,
+              y: 0.05,
+              z: peer.z,
+              heading: peer.heading,
+              steerNorm: peer.steerAngle,
+              speedMs: 12,
+              spec: peer.spec,
+              paintHex: peer.paintHex,
+              alias: peer.alias,
+              valueMessage: peer.valueMessage,
+            });
+          }
+
+          const nowSec = now * 0.001;
+          if (props.sessionMode === 'SPLIT_2P') {
+            const halfW = Math.max(2, Math.floor(cw / 2));
+            // Left Viewport: Player 1
+            renderFallback3DViewport({
+              ctx: ctx2d,
+              vpX: 0,
+              vpY: 0,
+              vpW: halfW - 1,
+              vpH: ch,
+              camera: {
+                posX: cam1.position.x,
+                posY: cam1.position.y,
+                posZ: cam1.position.z,
+                lookX: _cam1LookActual.x,
+                lookY: _cam1LookActual.y,
+                lookZ: _cam1LookActual.z,
+                fovDeg: cam1.fov,
+              },
+              cameraMode: props.cameraMode,
+              timeOfDay: props.timeOfDay,
+              realMapOverlayMode,
+              nowSec,
+              sceneData: fallbackSceneData,
+              vehicles: fallbackVehicles,
+              cockpitDriver: {
+                spec: p1Spec,
+                paintHex: p1Paint,
+                steerNorm: p1.steerNorm,
+                speedKmh: Math.abs(p1.speedMs) * 3.6,
+                rpm: p1.rpm,
+                gear: p1.gear,
+              },
+              guideArrow: activeP1Cp
+                ? {
+                    fromX: p1.x,
+                    fromZ: p1.z,
+                    toX: activeP1Cp.x,
+                    toZ: activeP1Cp.z,
+                    colorHex: '#fbbf24',
+                    visible: showP1Guide,
+                  }
+                : undefined,
+            });
+
+            // Right Viewport: Player 2
+            const sinH2 = Math.sin(p2.heading);
+            const cosH2 = Math.cos(p2.heading);
+            _p2CamIdealPos.set(p2.x + sinH2 * 7.6, 2.9, p2.z + cosH2 * 7.6);
+            cam2.position.lerp(_p2CamIdealPos, 1 - Math.exp(-9.5 * dt));
+            _p2CamIdealLook.set(p2.x - sinH2 * 6.5, 1.1, p2.z - cosH2 * 6.5);
+
+            const p2Vehicles = fallbackVehicles.map((v, idx) =>
+              idx === 0 ? { ...v, hideMeshForCockpit: false } : v,
+            );
+            renderFallback3DViewport({
+              ctx: ctx2d,
+              vpX: halfW + 1,
+              vpY: 0,
+              vpW: cw - halfW - 1,
+              vpH: ch,
+              camera: {
+                posX: cam2.position.x,
+                posY: cam2.position.y,
+                posZ: cam2.position.z,
+                lookX: _p2CamIdealLook.x,
+                lookY: _p2CamIdealLook.y,
+                lookZ: _p2CamIdealLook.z,
+                fovDeg: 60,
+              },
+              cameraMode: 'CHASE',
+              timeOfDay: props.timeOfDay,
+              realMapOverlayMode,
+              nowSec,
+              sceneData: fallbackSceneData,
+              vehicles: p2Vehicles,
+              guideArrow: activeP2Cp
+                ? {
+                    fromX: p2.x,
+                    fromZ: p2.z,
+                    toX: activeP2Cp.x,
+                    toZ: activeP2Cp.z,
+                    colorHex: '#38bdf8',
+                    visible: props.driveMode === 'RACE_4MIN',
+                  }
+                : undefined,
+            });
+          } else {
+            renderFallback3DViewport({
+              ctx: ctx2d,
+              vpX: 0,
+              vpY: 0,
+              vpW: cw,
+              vpH: ch,
+              camera: {
+                posX: cam1.position.x,
+                posY: cam1.position.y,
+                posZ: cam1.position.z,
+                lookX: _cam1LookActual.x,
+                lookY: _cam1LookActual.y,
+                lookZ: _cam1LookActual.z,
+                fovDeg: cam1.fov,
+              },
+              cameraMode: props.cameraMode,
+              timeOfDay: props.timeOfDay,
+              realMapOverlayMode,
+              nowSec,
+              sceneData: fallbackSceneData,
+              vehicles: fallbackVehicles,
+              cockpitDriver: {
+                spec: p1Spec,
+                paintHex: p1Paint,
+                steerNorm: p1.steerNorm,
+                speedKmh: Math.abs(p1.speedMs) * 3.6,
+                rpm: p1.rpm,
+                gear: p1.gear,
+              },
+              guideArrow: activeP1Cp
+                ? {
+                    fromX: p1.x,
+                    fromZ: p1.z,
+                    toX: activeP1Cp.x,
+                    toZ: activeP1Cp.z,
+                    colorHex: '#fbbf24',
+                    visible: showP1Guide,
+                  }
+                : undefined,
+            });
+          }
+        }
       }
 
       // Emit multiplayer delta (~16 Hz)
@@ -2051,7 +2567,7 @@ export const ThreeDrivingSimulator: React.FC<ThreeDrivingSimulatorProps> = ({
         );
       }
 
-      if (isSoftwareGl) {
+      if (renderer && !contextLost && isSoftwareGl) {
         afterDraw(tick);
       } else {
         frameId = requestAnimationFrame(tick);
@@ -2067,27 +2583,30 @@ export const ThreeDrivingSimulator: React.FC<ThreeDrivingSimulatorProps> = ({
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
       window.removeEventListener('resize', onResize);
-      renderer.domElement.removeEventListener('webglcontextlost', handleContextLost);
+      if (renderer) {
+        renderer.domElement.removeEventListener('webglcontextlost', handleContextLost);
+        renderer.domElement.removeEventListener('webglcontextrestored', handleContextRestored);
+      }
       soundEngine.stopSilence();
 
-      p1Rig.dispose();
-      p2Rig.dispose();
-      p1GuideArrow.dispose();
-      p2GuideArrow.dispose();
-      metaStages.forEach((ms) => ms.stage.dispose());
-      aiTraffic.forEach((a) => a.rig.dispose());
-      pedestrians.forEach((p) => p.actor.dispose());
-      remoteRigs.forEach((r) => r.rig.dispose());
+      p1Rig?.dispose();
+      p2Rig?.dispose();
+      p1GuideArrow?.dispose();
+      p2GuideArrow?.dispose();
+      metaStages.forEach((ms) => ms.stage?.dispose());
+      aiTraffic.forEach((a) => a.rig?.dispose());
+      pedestrians.forEach((p) => p.actor?.dispose());
+      remoteRigs.forEach((r) => r.rig?.dispose());
       scenicWorld?.dispose();
-      wildlifeHandle.dispose();
-      circuitInfra.dispose();
-      texPack.dispose();
-      envTex.dispose();
-      pedestriansTex.dispose();
-      grandTrophyTex.dispose();
+      wildlifeHandle?.dispose();
+      circuitInfra?.dispose();
+      texPack?.dispose();
+      envTex?.dispose();
+      pedestriansTex?.dispose();
+      grandTrophyTex?.dispose();
       welcomeBillboardTex?.dispose();
 
-      scene.traverse((obj) => {
+      scene?.traverse((obj) => {
         if ((obj as THREE.Mesh).isMesh) {
           const mesh = obj as THREE.Mesh;
           mesh.geometry?.dispose();
@@ -2102,11 +2621,18 @@ export const ThreeDrivingSimulator: React.FC<ThreeDrivingSimulatorProps> = ({
           sp.material?.dispose();
         }
       });
-      renderer.dispose();
+      if (renderer) {
+        renderer.dispose();
+        try {
+          renderer.forceContextLoss();
+        } catch {
+          // Ignore if context already released
+        }
+      }
     };
   }, [
-    map,
-    extraRoads,
+    map.id,
+    extraRoadsKey,
     realMapOverlayMode,
     driveMode,
     sessionMode,
@@ -2116,12 +2642,15 @@ export const ThreeDrivingSimulator: React.FC<ThreeDrivingSimulatorProps> = ({
     p2CarId,
     p2Paint,
     p2Alias,
+    contextRetrySeq,
   ]);
 
   return (
     <div
       className={`game-viewport-lock relative w-full h-full overflow-hidden ${
-        realMapOverlayMode ? 'bg-transparent z-10' : 'bg-[#090d16]'
+        realMapOverlayMode
+          ? 'bg-transparent z-10'
+          : 'bg-gradient-to-b from-[#38bdf8] via-[#bae6fd] to-[#e0f2fe]'
       }`}
     >
       <div ref={mountRef} className="w-full h-full touch-none" />

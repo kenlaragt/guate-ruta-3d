@@ -2,7 +2,9 @@ import React, { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { getCarById } from '../data/carsCatalog';
+import { renderFallbackShowroomTurntable } from '../engine/canvas3dFallbackRenderer';
 import { CarRig3D, createRealisticCarRig } from '../engine/models3d';
+import { detectSoftwareWebGL } from '../engine/proceduralTextures';
 import { CarModelId } from '../types/game';
 
 interface VehiclePreview3DProps {
@@ -34,26 +36,93 @@ export const VehiclePreview3D: React.FC<VehiclePreview3DProps> = ({ carId, paint
     const container = mountRef.current;
     if (!container) return;
 
-    const isSoftwareGl = (() => {
-      const gl = document.createElement('canvas').getContext('webgl2');
-      if (!gl) return true;
-      const ext = gl.getExtension('WEBGL_debug_renderer_info');
-      const param = ext ? ext.UNMASKED_RENDERER_WEBGL : gl.RENDERER;
-      const gpu = String(gl.getParameter(param));
-      gl.getExtension('WEBGL_lose_context')?.loseContext();
-      return /SwiftShader|llvmpipe|softpipe|Software|Basic Render/i.test(gpu);
-    })();
+    const isSoftwareGl = detectSoftwareWebGL();
+    const w0 = container.clientWidth || 560;
+    const h0 = container.clientHeight || 280;
 
-    const renderer = new THREE.WebGLRenderer({
-      antialias: !isSoftwareGl,
-      powerPreference: 'high-performance',
-    });
+    let activeRenderer: THREE.WebGLRenderer | null = null;
+    try {
+      activeRenderer = new THREE.WebGLRenderer({
+        antialias: !isSoftwareGl,
+        powerPreference: 'high-performance',
+      });
+    } catch {
+      try {
+        const probeCanvas = document.createElement('canvas');
+        const gl2 = probeCanvas.getContext('webgl2', {
+          antialias: false,
+          depth: true,
+          stencil: false,
+          failIfMajorPerformanceCaveat: false,
+        }) as WebGL2RenderingContext | null;
+        if (gl2) {
+          activeRenderer = new THREE.WebGLRenderer({
+            canvas: probeCanvas,
+            context: gl2,
+            antialias: false,
+          });
+        }
+      } catch {
+        activeRenderer = null;
+      }
+    }
+
+    if (!activeRenderer) {
+      // Built-in 3D Perspective Canvas Showroom Turntable when WebGL2 is disabled/blocked
+      const fallbackCanvas = document.createElement('canvas');
+      fallbackCanvas.width = w0;
+      fallbackCanvas.height = h0;
+      fallbackCanvas.style.width = '100%';
+      fallbackCanvas.style.height = '100%';
+      fallbackCanvas.style.display = 'block';
+      container.innerHTML = '';
+      container.appendChild(fallbackCanvas);
+      const ctx2d = fallbackCanvas.getContext('2d');
+
+      const onFallbackResize = () => {
+        if (!container) return;
+        fallbackCanvas.width = Math.max(2, container.clientWidth || 560);
+        fallbackCanvas.height = Math.max(2, container.clientHeight || 280);
+      };
+      window.addEventListener('resize', onFallbackResize);
+
+      let fbFrame = 0;
+      let fbUnmounted = false;
+      let fbPrev = performance.now();
+      const tickFallback = () => {
+        if (fbUnmounted) return;
+        const now = performance.now();
+        const dt = Math.min(0.05, Math.max(0.001, (now - fbPrev) / 1000));
+        fbPrev = now;
+        if (!dragStateRef.current.dragging) {
+          dragStateRef.current.manualYaw += dt * 0.45;
+        }
+        if (ctx2d) {
+          renderFallbackShowroomTurntable(
+            ctx2d,
+            fallbackCanvas.width,
+            fallbackCanvas.height,
+            carId,
+            paintHex,
+            dragStateRef.current.manualYaw,
+          );
+        }
+        fbFrame = requestAnimationFrame(tickFallback);
+      };
+      fbFrame = requestAnimationFrame(tickFallback);
+
+      return () => {
+        fbUnmounted = true;
+        cancelAnimationFrame(fbFrame);
+        window.removeEventListener('resize', onFallbackResize);
+      };
+    }
+
+    const renderer = activeRenderer;
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.12;
     renderer.setPixelRatio(isSoftwareGl ? 1 : Math.min(window.devicePixelRatio, 2));
-    const w0 = container.clientWidth || 560;
-    const h0 = container.clientHeight || 280;
     renderer.setSize(w0, h0);
 
     container.innerHTML = '';
@@ -146,24 +215,32 @@ export const VehiclePreview3D: React.FC<VehiclePreview3DProps> = ({ carId, paint
     let prev = performance.now();
 
     function afterDraw(cb: () => void) {
-      const gl = renderer.getContext() as WebGL2RenderingContext;
-      if (!gl || typeof gl.fenceSync !== 'function') {
-        frameId = window.setTimeout(cb, 32);
-        return;
-      }
-      const sync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
-      gl.flush();
-      const poll = () => {
-        if (unmounted) return;
-        const state = sync && gl.getSyncParameter(sync, gl.SYNC_STATUS);
-        if (state === gl.UNSIGNALED) {
+      try {
+        const gl = renderer.getContext() as WebGL2RenderingContext;
+        if (!gl || gl.isContextLost() || typeof gl.fenceSync !== 'function') {
+          frameId = window.setTimeout(cb, 32);
+          return;
+        }
+        const sync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
+        if (sync) {
+          gl.flush();
+          const poll = () => {
+            if (unmounted) return;
+            const state = gl.getSyncParameter(sync, gl.SYNC_STATUS);
+            if (state === gl.UNSIGNALED) {
+              frameId = window.setTimeout(poll, 4);
+            } else {
+              gl.deleteSync(sync);
+              frameId = window.setTimeout(cb, 32);
+            }
+          };
           frameId = window.setTimeout(poll, 4);
         } else {
-          if (sync) gl.deleteSync(sync);
           frameId = window.setTimeout(cb, 32);
         }
-      };
-      frameId = window.setTimeout(poll, 4);
+      } catch {
+        frameId = window.setTimeout(cb, 32);
+      }
     }
 
     function tick() {
@@ -208,6 +285,11 @@ export const VehiclePreview3D: React.FC<VehiclePreview3DProps> = ({ carId, paint
       ringMat.dispose();
       envTex.dispose();
       renderer.dispose();
+      try {
+        renderer.forceContextLoss();
+      } catch {
+        // Ignore if context already lost
+      }
     };
   }, [carId, paintHex]);
 

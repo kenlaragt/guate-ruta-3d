@@ -9,6 +9,7 @@ import {
   createDriverLabelSprite,
   createNumberDoorTexture,
   createValueMessageDecalTexture,
+  drawSafeRoundRect,
   ProceduralTexturePack,
 } from './proceduralTextures';
 
@@ -74,7 +75,7 @@ function createMetaBannerSprite(
 
   ctx.fillStyle = isGrandFinale ? 'rgba(30, 17, 6, 0.94)' : 'rgba(9, 13, 22, 0.92)';
   ctx.beginPath();
-  ctx.roundRect(14, 14, 740, 148, 22);
+  drawSafeRoundRect(ctx, 14, 14, 740, 148, 22);
   ctx.fill();
 
   ctx.strokeStyle = isGrandFinale ? '#facc15' : '#f59e0b';
@@ -2746,7 +2747,7 @@ function createHeritageLandmarkSprite(label: string): THREE.Sprite {
 
   ctx.fillStyle = 'rgba(12, 24, 44, 0.84)';
   ctx.beginPath();
-  ctx.roundRect(10, 10, 492, 76, 18);
+  drawSafeRoundRect(ctx, 10, 10, 492, 76, 18);
   ctx.fill();
 
   ctx.strokeStyle = '#fbbf24';

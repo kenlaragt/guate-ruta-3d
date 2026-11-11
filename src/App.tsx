@@ -69,11 +69,76 @@ import {
   RaceParticipantSummary,
   RegionGroup,
   RoadNode2D,
+  RoadSegmentSpec,
   SessionMode,
   TimeOfDay,
   TransmissionType,
   WorldMapSpec,
 } from './types/game';
+
+const EMPTY_EXTRA_ROADS: RoadSegmentSpec[] = [];
+
+interface SimulatorBoundaryProps {
+  onRecoverToRace: () => void;
+  onReturnToMenu: () => void;
+  children: React.ReactNode;
+}
+
+interface SimulatorBoundaryState {
+  hasError: boolean;
+}
+
+class SimulatorErrorBoundary extends React.Component<
+  SimulatorBoundaryProps,
+  SimulatorBoundaryState
+> {
+  state: SimulatorBoundaryState = { hasError: false };
+
+  static getDerivedStateFromError(): SimulatorBoundaryState {
+    return { hasError: true };
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="w-screen h-screen flex items-center justify-center p-6 bg-gradient-to-b from-[#6ec3f7] via-[#bce3fd] to-[#f0f9ff] text-slate-900">
+          <div className="max-w-md w-full bg-white border-2 border-sky-300 rounded-3xl p-6 shadow-2xl text-center space-y-4">
+            <h2 className="font-display italic text-2xl font-bold text-sky-900">
+              Pista 3D Lista para Reanudar
+            </h2>
+            <p className="text-sm text-slate-700 leading-relaxed">
+              Se detectó una interrupción gráfica temporal al iniciar la carrera y se protegió tu
+              progreso local.
+            </p>
+            <div className="flex flex-wrap items-center justify-center gap-3 pt-1">
+              <button
+                type="button"
+                onClick={() => {
+                  this.setState({ hasError: false });
+                  this.props.onRecoverToRace();
+                }}
+                className="px-5 py-2.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white font-bold text-sm shadow-sm cursor-pointer"
+              >
+                Reintentar Modo Carrera
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  this.setState({ hasError: false });
+                  this.props.onReturnToMenu();
+                }}
+                className="px-4 py-2.5 rounded-xl bg-sky-100 hover:bg-sky-200 text-sky-950 font-bold text-sm cursor-pointer"
+              >
+                Volver al Menú
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 const REGION_TABS: Array<{ id: RegionGroup; label: string }> = [
   { id: 'GUATEMALA', label: 'Circuitos de Guatemala 3D' },
@@ -570,7 +635,9 @@ export default function App() {
   });
 
   const hasGoogleMapsKey = Boolean(import.meta.env.VITE_GOOGLE_MAPS_API_KEY);
-  const isRealMapOverlayActive = Boolean(isOnline && realMapEnabled && hasGoogleMapsKey);
+  const isRealMapOverlayActive = Boolean(
+    isOnline && realMapEnabled && hasGoogleMapsKey && !gmpQuotaExceeded,
+  );
 
   const activeMap = useMemo(() => getMapById(selectedMapId), [selectedMapId]);
   const effectiveMap = useMemo<WorldMapSpec>(() => {
@@ -1234,33 +1301,41 @@ export default function App() {
   // =========================================================================
   if (gameState === 'PLAYING') {
     return (
-      <div className="game-viewport-lock relative w-screen h-screen overflow-hidden bg-[#090d16] select-none touch-none flex flex-col">
-        {gmpQuotaBanner}
-        {preTrackLaunchModalElement}
-        <OfflineIndicator
-          forceOfflineMode={isForcedLocalOffline}
-          onSwitchToOnline={handleSelectOnlineGlobal}
-        />
-
-        <div className="relative flex-1 w-full overflow-hidden touch-none">
-          <RealGoogleMapDriveLayer
-            enabled={isRealMapOverlayActive}
-            isOnline={isOnline}
-            mapTypeId={realMapTypeId}
-            activeMap={effectiveMap}
-            customPlaceTrack={customPlaceTrack}
-            playerX={telemetry.x}
-            playerZ={telemetry.z}
-            playerHeading={telemetry.heading}
-            remotePlayers={peerList}
-            onQuotaExceeded={() => setGmpQuotaExceeded(true)}
+      <SimulatorErrorBoundary
+        onRecoverToRace={() => {
+          setRealMapEnabled(false);
+          setResetTrigger((n) => n + 1);
+          setDescentTrigger((n) => n + 1);
+        }}
+        onReturnToMenu={() => setGameState('TITLE_MENU')}
+      >
+        <div className="game-viewport-lock relative w-screen h-screen overflow-hidden bg-gradient-to-b from-[#38bdf8] via-[#7dd3fc] to-[#bae6fd] select-none touch-none flex flex-col">
+          {gmpQuotaBanner}
+          {preTrackLaunchModalElement}
+          <OfflineIndicator
+            forceOfflineMode={isForcedLocalOffline}
+            onSwitchToOnline={handleSelectOnlineGlobal}
           />
 
-          <ThreeDrivingSimulator
-            map={effectiveMap}
-            mapOrderIndex={mapOrderIndex}
-            extraRoads={[]}
-            realMapOverlayMode={isRealMapOverlayActive}
+          <div className="relative flex-1 w-full overflow-hidden touch-none">
+            <RealGoogleMapDriveLayer
+              enabled={isRealMapOverlayActive}
+              isOnline={isOnline}
+              mapTypeId={realMapTypeId}
+              activeMap={effectiveMap}
+              customPlaceTrack={customPlaceTrack}
+              playerX={telemetry.x}
+              playerZ={telemetry.z}
+              playerHeading={telemetry.heading}
+              remotePlayers={peerList}
+              onQuotaExceeded={() => setGmpQuotaExceeded(true)}
+            />
+
+            <ThreeDrivingSimulator
+              map={effectiveMap}
+              mapOrderIndex={mapOrderIndex}
+              extraRoads={EMPTY_EXTRA_ROADS}
+              realMapOverlayMode={isRealMapOverlayActive}
             gameState={gameState}
             driveMode={driveMode}
             sessionMode={sessionMode}
@@ -1365,9 +1440,14 @@ export default function App() {
                     {effectiveMap.name}
                   </span>
                   {isRealMapOverlayActive && (
-                    <span className="text-[10px] font-semibold text-sky-300 shrink-0">
-                      (Mapa Real)
-                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setRealMapEnabled(false)}
+                      title="Cambiar a paisaje 3D completo con cielo natural"
+                      className="text-[10px] font-semibold text-sky-300 hover:text-amber-300 underline shrink-0 cursor-pointer"
+                    >
+                      (Mapa Real · Ver 3D)
+                    </button>
                   )}
                   <span aria-hidden="true">·</span>
                   <span className="font-mono tabular-nums text-amber-300 shrink-0">
@@ -1487,7 +1567,7 @@ export default function App() {
                 </button>
                 <MinimapCanvas
                   map={effectiveMap}
-                  extraRoads={[]}
+                  extraRoads={EMPTY_EXTRA_ROADS}
                   playerX={telemetry.x}
                   playerZ={telemetry.z}
                   playerHeading={telemetry.heading}
@@ -2153,12 +2233,13 @@ export default function App() {
             onVirtualInput={handleVirtualInput}
           />
         </div>
-      </div>
+        </div>
+      </SimulatorErrorBoundary>
     );
   }
 
   // =========================================================================
-  // TITLE MENU — DAYTIME SKY-BLUE YOUTHFUL INTERFACE + OFFICIAL COVER ART + DYNAMIC SUBMENU
+  // TITLE MENU — NATURAL SKY-BLUE INTERFACE + GRAN TURISMO 3: A-SPEC EMBLEM + RED CORNER
   // =========================================================================
   const openSubMenuSection = (tab: TitleSubMenuTab) => {
     setActiveSubMenu(tab);
@@ -2169,7 +2250,7 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-[#bae6fd] via-[#e6f5ff] to-[#f8fcff] text-slate-900 flex flex-col">
+    <div className="min-h-screen bg-gradient-to-b from-[#6ec3f7] via-[#cbe9fe] to-[#f4faff] text-slate-900 flex flex-col">
       {gmpQuotaBanner}
       {preTrackLaunchModalElement}
       <OfflineIndicator
@@ -2177,19 +2258,23 @@ export default function App() {
         onSwitchToOnline={handleSelectOnlineGlobal}
       />
 
-      {/* Strict 3-Zone Daytime Sky Top Bar */}
-      <header className="flex items-center justify-between gap-8 px-6 md:px-10 py-4 border-b border-sky-200/90 bg-white/85 backdrop-blur-md sticky top-0 z-40">
+      {/* Strict 3-Zone Natural Sky Top Bar with Subtle Red Motorsport Corner Accent */}
+      <header className="relative overflow-hidden flex items-center justify-between gap-8 px-6 md:px-10 py-4 border-b border-sky-300/80 bg-gradient-to-r from-[#eff8ff]/95 via-[#e0f2fe]/95 to-[#eff8ff]/95 backdrop-blur-md sticky top-0 z-40 shadow-sm">
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute -right-6 inset-y-0 w-24 -skew-x-[22deg] bg-gradient-to-b from-[#ef4444]/18 via-[#dc2626]/22 to-[#991b1b]/25 border-l border-[#ef4444]/40"
+        />
         <a
           href="#inicio"
-          className="font-display italic text-xl font-bold tracking-tight whitespace-nowrap shrink-0 drop-shadow-[0_1px_0_rgba(255,255,255,0.92)]"
+          className="relative z-10 font-display italic text-xl font-bold tracking-wider whitespace-nowrap shrink-0 drop-shadow-[0_1.5px_0_rgba(7,26,64,0.22)]"
         >
-          <span className="bg-gradient-to-b from-[#0066FF] via-[#0047B8] to-[#002E7A] bg-clip-text text-transparent">
+          <span className="bg-gradient-to-b from-[#0f4c9c] via-[#1d6fd6] to-[#0a2e68] bg-clip-text text-transparent">
             GuateRutas{' '}
           </span>
-          <span className="bg-gradient-to-b from-[#FF2E40] via-[#E10600] to-[#A80016] bg-clip-text text-transparent">
+          <span className="bg-gradient-to-b from-[#ff3b4d] via-[#dc2626] to-[#880814] bg-clip-text text-transparent">
             3D{' '}
           </span>
-          <span className="bg-gradient-to-r from-[#0052CC] to-[#0284C7] bg-clip-text text-transparent">
+          <span className="bg-gradient-to-b from-[#1e64c8] via-[#0284c7] to-[#0c3b80] bg-clip-text text-transparent">
             y más allá
           </span>
         </a>
@@ -2273,25 +2358,47 @@ export default function App() {
                 <span>Avatares 3D y Patrimonio Cultural</span>
               </div>
 
-              <div className="space-y-2">
-                <h1 className="font-display italic text-3xl sm:text-4xl lg:text-5xl font-bold tracking-tight leading-[1.08] text-balance drop-shadow-[0_2px_0_rgba(255,255,255,0.92)]">
-                  <span className="bg-gradient-to-b from-[#0066FF] via-[#0047B8] to-[#002B73] bg-clip-text text-transparent">
-                    GuateRutas{' '}
-                  </span>
-                  <span className="bg-gradient-to-b from-[#FF3347] via-[#E10600] to-[#9E0014] bg-clip-text text-transparent">
-                    3D{' '}
-                  </span>
-                  <span className="bg-gradient-to-r from-[#0052CC] via-[#0369A1] to-[#0284C7] bg-clip-text text-transparent">
-                    y más allá
-                  </span>
-                </h1>
-                <div className="flex items-center gap-1.5 max-w-xs" aria-hidden="true">
-                  <div className="h-[3px] w-16 rounded-full bg-gradient-to-r from-[#0052CC] to-[#38BDF8] -skew-x-12" />
-                  <div className="h-[3px] w-10 rounded-full bg-gradient-to-r from-[#E10600] to-[#FF4D5E] -skew-x-12" />
+              {/* GRAN TURISMO 3: A-SPEC INSPIRED EMBLEM PLAQUE: Natural Sky-to-Cobalt Metallic Body + Red Taillight Corner + Sculpted Silver-Chrome Typography */}
+              <div className="relative overflow-hidden rounded-2xl border border-white/85 bg-gradient-to-br from-[#0d4792] via-[#1c74d8] to-[#5ec0fa] px-5 py-4 sm:px-6 sm:py-5 shadow-[0_14px_30px_rgba(12,56,118,0.22)]">
+                {/* Natural Sky Specular Horizon Reflection */}
+                <div
+                  aria-hidden="true"
+                  className="pointer-events-none absolute inset-x-0 top-0 h-1/2 bg-gradient-to-b from-sky-200/35 via-white/10 to-transparent"
+                />
+                {/* Iconic Diagonal Crimson-Red Automotive Taillight Corner ("una esquina roja") */}
+                <div
+                  aria-hidden="true"
+                  className="pointer-events-none absolute -right-8 -top-6 -bottom-6 w-28 sm:w-36 -skew-x-[18deg] bg-gradient-to-b from-[#ff3b4e] via-[#dc2626] to-[#7f1d1d] border-l-2 border-rose-200/75 shadow-[-10px_0_24px_rgba(127,29,29,0.45)]"
+                />
+                <div
+                  aria-hidden="true"
+                  className="pointer-events-none absolute right-2 top-3 bottom-3 w-3 -skew-x-[18deg] rounded-full bg-gradient-to-b from-amber-200/70 via-rose-300/45 to-transparent"
+                />
+
+                <div className="relative z-10 pr-12 sm:pr-20 space-y-1.5">
+                  <h1 className="font-display italic text-3xl sm:text-4xl lg:text-[2.75rem] font-bold tracking-wider leading-[1.04] text-balance drop-shadow-[0_3px_0_rgba(5,20,54,0.92)]">
+                    <span className="bg-gradient-to-b from-[#ffffff] via-[#e2e8f0] to-[#94a3b8] bg-clip-text text-transparent">
+                      GuateRutas{' '}
+                    </span>
+                    <span className="inline-block text-[1.14em] bg-gradient-to-b from-[#ffffff] via-[#f1f5f9] to-[#7dd3fc] bg-clip-text text-transparent">
+                      3D{' '}
+                    </span>
+                    <span className="bg-gradient-to-b from-[#f8fafc] via-[#dbeafe] to-[#93c5fd] bg-clip-text text-transparent">
+                      y más allá
+                    </span>
+                  </h1>
+
+                  {/* GT3 Chrome & Crimson Taillight Horizon Rule */}
+                  <div className="flex items-center gap-2 pt-0.5" aria-hidden="true">
+                    <div className="h-[3px] w-24 sm:w-32 rounded-full bg-gradient-to-r from-white via-sky-200 to-sky-400/70 -skew-x-[18deg] shadow-sm" />
+                    <div className="h-[3px] w-12 rounded-full bg-gradient-to-r from-[#ff4d5e] to-[#dc2626] -skew-x-[18deg] shadow-sm" />
+                  </div>
+
+                  {/* GT3 "A-Spec" Extended Italic Subtitle */}
+                  <p className="font-display italic text-base sm:text-xl font-bold tracking-[0.14em] bg-gradient-to-b from-[#ffffff] via-[#e0f2fe] to-[#bae6fd] bg-clip-text text-transparent drop-shadow-[0_2px_0_rgba(5,20,54,0.88)]">
+                    Juegos de 3D de Carros
+                  </p>
                 </div>
-                <p className="font-display italic text-lg sm:text-xl font-bold tracking-wide bg-gradient-to-r from-[#0047B8] via-[#0264B8] to-[#D90429] bg-clip-text text-transparent drop-shadow-[0_1px_0_rgba(255,255,255,0.85)]">
-                  Juegos de 3D de Carros
-                </p>
               </div>
 
               <p className="text-slate-700 text-base leading-relaxed max-w-xl">
@@ -2623,28 +2730,32 @@ export default function App() {
               </div>
             </div>
 
-            {/* Bottom Scrim with Title & Quick Play */}
-            <div className="relative z-10 p-6 bg-gradient-to-t from-slate-950/90 via-slate-950/55 to-transparent flex flex-col sm:flex-row sm:items-end justify-between gap-4">
-              <div className="space-y-1">
-                <div className="text-xs text-sky-300 font-semibold">
+            {/* Bottom Scrim with GT3 Chrome Title, Red Corner Accent & Quick Play */}
+            <div className="relative overflow-hidden z-10 p-6 bg-gradient-to-t from-[#071d42]/95 via-[#0c316e]/70 to-transparent flex flex-col sm:flex-row sm:items-end justify-between gap-4">
+              <div
+                aria-hidden="true"
+                className="pointer-events-none absolute -right-8 -bottom-4 top-6 w-28 -skew-x-[18deg] bg-gradient-to-b from-[#ff3b4e]/85 via-[#dc2626]/90 to-[#7f1d1d]/95 border-l border-rose-200/60"
+              />
+              <div className="relative z-10 space-y-1">
+                <div className="text-xs text-sky-200 font-semibold">
                   {heroVisualTab === 'CARATULA'
                     ? `Piloto: ${safeP1Display} · ${activeCar.name}`
                     : activeMap.adaptedPhotoCaption}
                 </div>
                 {heroVisualTab === 'CARATULA' ? (
                   <>
-                    <h2 className="font-display italic text-2xl sm:text-3xl font-bold leading-tight drop-shadow-[0_2px_6px_rgba(0,18,56,0.75)]">
-                      <span className="bg-gradient-to-b from-[#E0F2FE] via-[#60A5FA] to-[#2563EB] bg-clip-text text-transparent">
+                    <h2 className="font-display italic text-2xl sm:text-3xl font-bold tracking-wider leading-tight drop-shadow-[0_2.5px_0_rgba(4,15,42,0.92)]">
+                      <span className="bg-gradient-to-b from-[#ffffff] via-[#e2e8f0] to-[#94a3b8] bg-clip-text text-transparent">
                         GuateRutas{' '}
                       </span>
-                      <span className="bg-gradient-to-b from-[#FF6B7A] via-[#EF233C] to-[#D90429] bg-clip-text text-transparent">
+                      <span className="bg-gradient-to-b from-[#ffffff] via-[#f1f5f9] to-[#7dd3fc] bg-clip-text text-transparent">
                         3D{' '}
                       </span>
-                      <span className="bg-gradient-to-r from-[#BAE6FD] to-[#38BDF8] bg-clip-text text-transparent">
+                      <span className="bg-gradient-to-b from-[#f8fafc] via-[#dbeafe] to-[#93c5fd] bg-clip-text text-transparent">
                         y más allá
                       </span>
                     </h2>
-                    <div className="font-display italic text-sm sm:text-base font-bold tracking-wide bg-gradient-to-r from-[#93C5FD] via-[#E0F2FE] to-[#FF6B7A] bg-clip-text text-transparent">
+                    <div className="font-display italic text-sm sm:text-base font-bold tracking-[0.12em] bg-gradient-to-b from-[#ffffff] via-[#e0f2fe] to-[#bae6fd] bg-clip-text text-transparent drop-shadow-[0_1.5px_0_rgba(4,15,42,0.88)]">
                       Juegos de 3D de Carros
                     </div>
                   </>
@@ -2663,7 +2774,7 @@ export default function App() {
               <button
                 type="button"
                 onClick={handleStartSimulation}
-                className="px-4 py-2.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold text-xs sm:text-sm shadow-md transition-transform hover:scale-105 cursor-pointer whitespace-nowrap shrink-0"
+                className="relative z-10 px-4 py-2.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold text-xs sm:text-sm shadow-md transition-transform hover:scale-105 cursor-pointer whitespace-nowrap shrink-0"
               >
                 ¡Arrancar Carrera! →
               </button>
@@ -2756,22 +2867,27 @@ export default function App() {
                       <Car className="w-14 h-14 text-sky-900" />
                     </div>
                   )}
-                  <div className="absolute inset-x-0 bottom-0 p-4 bg-gradient-to-t from-slate-950/90 via-slate-950/50 to-transparent text-white space-y-0.5">
-                    <div className="text-[11px] font-semibold text-amber-300">
+                  {/* GT3 Red Taillight Corner Wedge on Official 3:4 Box Cover */}
+                  <div
+                    aria-hidden="true"
+                    className="pointer-events-none absolute -right-6 bottom-0 top-1/2 w-16 -skew-x-[16deg] bg-gradient-to-b from-[#ff3b4e]/90 via-[#dc2626]/95 to-[#7f1d1d] border-l border-rose-200/70"
+                  />
+                  <div className="absolute inset-x-0 bottom-0 p-4 bg-gradient-to-t from-[#071d42]/95 via-[#0c316e]/70 to-transparent text-white space-y-0.5">
+                    <div className="text-[11px] font-semibold text-sky-200">
                       Carátula Oficial · Edición Juvenil
                     </div>
-                    <div className="font-display italic text-lg font-bold leading-tight drop-shadow-[0_2px_5px_rgba(0,18,56,0.75)]">
-                      <span className="bg-gradient-to-b from-[#E0F2FE] via-[#60A5FA] to-[#2563EB] bg-clip-text text-transparent">
+                    <div className="font-display italic text-lg font-bold tracking-wider leading-tight drop-shadow-[0_2px_0_rgba(4,15,42,0.92)] pr-8">
+                      <span className="bg-gradient-to-b from-[#ffffff] via-[#e2e8f0] to-[#94a3b8] bg-clip-text text-transparent">
                         GuateRutas{' '}
                       </span>
-                      <span className="bg-gradient-to-b from-[#FF6B7A] via-[#EF233C] to-[#D90429] bg-clip-text text-transparent">
+                      <span className="bg-gradient-to-b from-[#ffffff] via-[#f1f5f9] to-[#7dd3fc] bg-clip-text text-transparent">
                         3D{' '}
                       </span>
-                      <span className="bg-gradient-to-r from-[#BAE6FD] to-[#38BDF8] bg-clip-text text-transparent">
+                      <span className="bg-gradient-to-b from-[#f8fafc] via-[#dbeafe] to-[#93c5fd] bg-clip-text text-transparent">
                         y más allá
                       </span>
                     </div>
-                    <div className="font-display italic text-xs font-bold tracking-wide bg-gradient-to-r from-[#93C5FD] via-[#E0F2FE] to-[#FF6B7A] bg-clip-text text-transparent">
+                    <div className="font-display italic text-xs font-bold tracking-[0.12em] bg-gradient-to-b from-[#ffffff] via-[#e0f2fe] to-[#bae6fd] bg-clip-text text-transparent drop-shadow-[0_1px_0_rgba(4,15,42,0.88)]">
                       Juegos de 3D de Carros
                     </div>
                   </div>
@@ -4245,15 +4361,15 @@ export default function App() {
         </section>
       </main>
 
-      <footer className="border-t border-sky-200/90 px-6 md:px-10 py-6 text-xs text-slate-600 flex flex-wrap items-center justify-between gap-4 max-w-7xl w-full mx-auto">
+      <footer className="border-t border-sky-300/80 px-6 md:px-10 py-6 text-xs text-slate-600 flex flex-wrap items-center justify-between gap-4 max-w-7xl w-full mx-auto">
         <div className="flex flex-wrap items-center gap-2">
-          <span className="font-display italic font-bold">
-            <span className="text-[#0047B8]">GuateRutas </span>
-            <span className="text-[#E10600]">3D </span>
-            <span className="text-[#0055D4]">y más allá</span>
+          <span className="font-display italic font-bold tracking-wider">
+            <span className="text-[#0d4792]">GuateRutas </span>
+            <span className="text-[#dc2626]">3D </span>
+            <span className="text-[#1c70d4]">y más allá</span>
           </span>
           <span aria-hidden="true">·</span>
-          <span className="font-display italic text-[#0052CC] font-semibold">
+          <span className="font-display italic tracking-wider text-[#0d4792] font-semibold">
             Juegos de 3D de Carros
           </span>
           <span aria-hidden="true">·</span>

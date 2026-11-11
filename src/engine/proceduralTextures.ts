@@ -12,6 +12,62 @@ export interface ProceduralTexturePack {
   dispose: () => void;
 }
 
+let cachedSoftwareGl: boolean | null = null;
+
+/**
+ * Probes WebGL GPU renderer string at most ONCE per session (never leaking WebGL context slots).
+ */
+export function detectSoftwareWebGL(): boolean {
+  if (cachedSoftwareGl !== null) return cachedSoftwareGl;
+  if (typeof document === 'undefined') {
+    cachedSoftwareGl = true;
+    return true;
+  }
+  try {
+    const probeCanvas = document.createElement('canvas');
+    probeCanvas.width = 1;
+    probeCanvas.height = 1;
+    const gl =
+      probeCanvas.getContext('webgl2') ||
+      probeCanvas.getContext('webgl') ||
+      (probeCanvas.getContext('experimental-webgl') as WebGLRenderingContext | null);
+    if (!gl) {
+      cachedSoftwareGl = true;
+      return true;
+    }
+    const ext = gl.getExtension('WEBGL_debug_renderer_info');
+    const param = ext ? ext.UNMASKED_RENDERER_WEBGL : gl.RENDERER;
+    const gpu = String(gl.getParameter(param) || '');
+    gl.getExtension('WEBGL_lose_context')?.loseContext();
+    cachedSoftwareGl = /SwiftShader|llvmpipe|softpipe|Software|Basic Render/i.test(gpu);
+    return cachedSoftwareGl;
+  } catch {
+    cachedSoftwareGl = true;
+    return true;
+  }
+}
+
+export function drawSafeRoundRect(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  r: number,
+): void {
+  const rad = Math.max(0, Math.min(r, w * 0.5, h * 0.5));
+  if (typeof ctx.roundRect === 'function') {
+    ctx.roundRect(x, y, w, h, rad);
+    return;
+  }
+  ctx.moveTo(x + rad, y);
+  ctx.arcTo(x + w, y, x + w, y + h, rad);
+  ctx.arcTo(x + w, y + h, x, y + h, rad);
+  ctx.arcTo(x, y + h, x, y, rad);
+  ctx.arcTo(x, y, x + w, y, rad);
+  ctx.closePath();
+}
+
 function finalizeColorTex(tex: THREE.CanvasTexture, maxAnisotropy: number, repeatX = 1, repeatY = 1) {
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.anisotropy = maxAnisotropy;
@@ -44,7 +100,7 @@ function buildRoadTexture(surface: RoadSurface, maxAnisotropy: number): THREE.Ca
         const warm = (r + col) % 3 === 0 ? 8 : 0;
         ctx.fillStyle = `rgb(${shade + warm}, ${shade + 2}, ${shade - 4})`;
         ctx.beginPath();
-        ctx.roundRect(sx + 2, sy + 2, cellW - 5, cellH - 5, 7);
+        drawSafeRoundRect(ctx, sx + 2, sy + 2, cellW - 5, cellH - 5, 7);
         ctx.fill();
       }
     }
@@ -404,7 +460,7 @@ export function createDriverLabelSprite(
 
   ctx.fillStyle = 'rgba(9, 15, 28, 0.90)';
   ctx.beginPath();
-  ctx.roundRect(14, 12, 548, 140, 22);
+  drawSafeRoundRect(ctx, 14, 12, 548, 140, 22);
   ctx.fill();
 
   ctx.strokeStyle = accentHex || '#38bdf8';
@@ -456,7 +512,7 @@ export function createValueMessageDecalTexture(
   grad.addColorStop(1, '#0f172a');
   ctx.fillStyle = grad;
   ctx.beginPath();
-  ctx.roundRect(6, 8, 500, 96, 18);
+  drawSafeRoundRect(ctx, 6, 8, 500, 96, 18);
   ctx.fill();
 
   ctx.strokeStyle = accentHex || '#38bdf8';
@@ -517,8 +573,8 @@ export function createAvatarFaceTexture(
     // Sporty visor sunglasses
     ctx.fillStyle = '#0f172a';
     ctx.beginPath();
-    ctx.roundRect(68, 102, 50, 28, 8);
-    ctx.roundRect(138, 102, 50, 28, 8);
+    drawSafeRoundRect(ctx, 68, 102, 50, 28, 8);
+    drawSafeRoundRect(ctx, 138, 102, 50, 28, 8);
     ctx.fill();
     ctx.fillRect(116, 110, 24, 6);
     ctx.fillStyle = 'rgba(56, 189, 248, 0.45)';

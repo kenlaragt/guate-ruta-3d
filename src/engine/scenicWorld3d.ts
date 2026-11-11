@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { RoadSegmentSpec, TimeOfDay, WorldMapSpec } from '../types/game';
-import { ProceduralTexturePack } from './proceduralTextures';
+import { drawSafeRoundRect, ProceduralTexturePack } from './proceduralTextures';
 
 export interface ScenicWorldHandle3D {
   group: THREE.Group;
@@ -309,7 +309,7 @@ function createInterculturalBoardTexture(idx: number): THREE.CanvasTexture {
   grad.addColorStop(1, item.bgB);
   ctx.fillStyle = grad;
   ctx.beginPath();
-  ctx.roundRect(8, 8, 624, 240, 24);
+  drawSafeRoundRect(ctx, 8, 8, 624, 240, 24);
   ctx.fill();
 
   ctx.strokeStyle = item.accent;
@@ -353,7 +353,7 @@ function createSmallInclusionSignTexture(idx: number): THREE.CanvasTexture {
 
   ctx.fillStyle = '#f8fafc';
   ctx.beginPath();
-  ctx.roundRect(8, 8, 432, 208, 20);
+  drawSafeRoundRect(ctx, 8, 8, 432, 208, 20);
   ctx.fill();
 
   ctx.strokeStyle = item.borderHex;
@@ -392,7 +392,7 @@ function createHistoricLudicGameSignTexture(idx: number): THREE.CanvasTexture {
   // Warm vintage enamel / parchment heritage plaque aesthetic
   ctx.fillStyle = '#fffbeb';
   ctx.beginPath();
-  ctx.roundRect(8, 8, 560, 224, 22);
+  drawSafeRoundRect(ctx, 8, 8, 560, 224, 22);
   ctx.fill();
 
   ctx.strokeStyle = item.colorHex;
